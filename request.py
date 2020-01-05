@@ -15,14 +15,14 @@ from google.cloud.logging.handlers import CloudLoggingHandler
 from google.cloud.logging.resource import Resource
 from time import time
 
-client = google.cloud.logging.Client()
-loggingRessource = Resource(type="gae_app",
-							labels={
-								"project_id": utils.projectID,
-								"module_id": "default",
-							})
+#client = google.cloud.logging.Client()
+#loggingRessource = Resource(type="gae_app",
+#							labels={
+#								"project_id": utils.projectID,
+#								"module_id": "default",
+#							})
 
-reqLogger = client.logger("ViUR")
+#reqLogger = client.logger("ViUR")
 
 
 class ViURDefaultLogger(CloudLoggingHandler):
@@ -42,10 +42,10 @@ class ViURDefaultLogger(CloudLoggingHandler):
 			trace=TRACE
 		)
 
-
-handler = ViURDefaultLogger(client, name="ViUR-Messages", resource=Resource(type="gae_app", labels={}))
-google.cloud.logging.handlers.setup_logging(handler)
-logging.getLogger().setLevel(logging.DEBUG)
+from viur.xeno import log
+#handler = ViURDefaultLogger(client, name="ViUR-Messages", resource=Resource(type="gae_app", labels={}))
+#google.cloud.logging.handlers.setup_logging(handler)
+#logging.getLogger().setLevel(logging.DEBUG)
 
 
 class BrowseHandler():  # webapp.RequestHandler
@@ -298,7 +298,7 @@ class BrowseHandler():  # webapp.RequestHandler
 			self.response.write(res.encode("UTF-8"))
 		finally:
 			self.saveSession()
-
+			return 0 #Disabled GAE logging
 			SEVERITY = "DEBUG"
 			if self.maxLogLevel >= 50:
 				SEVERITY = "CRITICAL"
@@ -385,6 +385,7 @@ class BrowseHandler():  # webapp.RequestHandler
 				raise (errors.MethodNotAllowed())
 		# Check for forceSSL flag
 		if not self.internalRequest \
+				and conf["viur.forceSSL"] \
 				and "forceSSL" in dir(caller) \
 				and caller.forceSSL \
 				and not self.request.host_url.lower().startswith("https://") \
