@@ -18,7 +18,7 @@ import email.header
 from typing import Any
 
 # Determine which ProjectID we currently run in (as the app_identity module isn't available anymore)
-_, projectID = google.auth.default()
+_, projectID = conf["xeno.application.projectID"] #google.auth.default()
 del _
 
 
@@ -107,6 +107,7 @@ def _GAE_sendEMail(dests, name, skel, extraFiles=[], cc=None, bcc=None, replyTo=
 	"""
 	Internal function for using Google App Engine Email processing API.
 	"""
+	return True #FixME
 	headers, data = conf["viur.emailRenderer"](skel, name, dests, **kwargs)
 
 	xheader = {}
@@ -122,7 +123,7 @@ def _GAE_sendEMail(dests, name, skel, extraFiles=[], cc=None, bcc=None, replyTo=
 	else:
 		message = mail.EmailMessage()
 
-	mailfrom = "viur@%s.appspotmail.com" % app_identity.get_application_id()
+	mailfrom = "viur@%s.appspotmail.com" % projectID
 
 	if "subject" in headers:
 		message.subject = "=?utf-8?B?%s?=" % base64.b64encode(headers["subject"].encode("UTF-8"))
@@ -179,10 +180,10 @@ def sendEMailToAdmins(subject, body, sender=None):
 		:type sender: str
 	"""
 	if not sender:
-		sender = "viur@%s.appspotmail.com" % app_identity.get_application_id()
-
-	mail.send_mail_to_admins(sender, "=?utf-8?B?%s?=" % base64.b64encode(subject.encode("UTF-8")),
-							 body.encode('ascii', 'xmlcharrefreplace'))
+		sender = "viur@%s.appspotmail.com" % projectID
+	#FIXME
+	#mail.send_mail_to_admins(sender, "=?utf-8?B?%s?=" % base64.b64encode(subject.encode("UTF-8")),
+	#						 body.encode('ascii', 'xmlcharrefreplace'))
 
 
 def getCurrentUser():
