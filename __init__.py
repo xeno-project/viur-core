@@ -38,6 +38,11 @@ import sys, traceback, os, inspect
 #	sys.path.insert(0, os.path.join(cwd, "libs", lib))
 
 from viur.core.config import conf
+
+from viur import xeno
+conf.update(xeno.loadConfiguration())
+xeno.init(conf)
+
 from viur.core import request
 from viur.core import languages as servertrans
 from viur.core.i18n import initializeTranslations
@@ -314,6 +319,10 @@ def setup(modules, render=None, default="html"):
 		if mode == "allow-from":
 			assert uri is not None and (
 					uri.lower().startswith("https://") or uri.lower().startswith("http://"))
+
+	from viur import xeno
+	xeno.setup()
+
 	runStartupTasks()  # Add a deferred call to run all queued startup tasks
 	initializeTranslations()
 	return app
@@ -331,6 +340,14 @@ def run():
 def app(environ, start_response):
 	req = webob.Request(environ)
 	resp = webob.Response()
+
+	from viur import xeno
+	static_resp = xeno.static_routes(req, environ, start_response)
+
+	if static_resp != False:
+		return static_resp
+	logging.info("Status[%s]: %s" % (resp.status_code, req.path_info))
+
 	handler = request.BrowseHandler(req, resp)
 	request.current.setRequest(handler)
 	handler.processRequest()
