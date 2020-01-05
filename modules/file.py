@@ -20,10 +20,10 @@ from io import BytesIO
 from PIL import Image
 from typing import Union, Tuple, Dict
 
-client = storage.Client.from_service_account_json("store_credentials.json")
-bucket = client.lookup_bucket("%s.appspot.com" % projectID)
-conf["viur.file.hmacKey"] = hashlib.sha3_384(
-	open("store_credentials.json", "rb").read()).digest()  # FIXME: Persistent key from db?
+#client = storage.Client.from_service_account_json("store_credentials.json")
+#bucket = client.lookup_bucket("%s.appspot.com" % projectID)
+#conf["viur.file.hmacKey"] = hashlib.sha3_384(
+#	open("store_credentials.json", "rb").read()).digest()  # FIXME: Persistent key from db?
 
 
 
