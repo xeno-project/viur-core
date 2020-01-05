@@ -25,7 +25,7 @@ if not queueRegion:
 	# Probably local development server
 	logging.error("Taskqueue disabled, tasks will run inline!")
 
-taskClient = tasks_v2.CloudTasksClient()
+#taskClient = tasks_v2.CloudTasksClient()
 
 _periodicTasks: Dict[str, Dict[int, Callable]] = {}
 _callableTasks = {}
@@ -382,6 +382,9 @@ def callDeferred(func):
 					"Your customEnvironmentHandler must be a tuple of two callable if set!"
 				env["custom"] = conf["viur.tasks.customEnvironmentHandler"][0]()
 			pickled = json.dumps((command, (funcPath, args, kwargs, env))).encode("UTF-8")
+
+			from viur import xeno
+			return xeno.callDeferred_hook(func, args, kwargs)
 
 			project = utils.projectID
 			location = queueRegion
