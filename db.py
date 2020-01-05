@@ -23,7 +23,7 @@ from google.protobuf import wrappers_pb2, struct_pb2, timestamp_pb2
 from collections import namedtuple
 from google.type import latlng_pb2
 from copy import deepcopy
-from google.cloud import datastore
+from viur.xeno import datastore
 
 
 """
