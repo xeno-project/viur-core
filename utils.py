@@ -8,19 +8,21 @@ import string, random, base64
 from viur.core import conf
 import logging
 import google.auth
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 from quopri import decodestring
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha256
 import email.header
-from typing import Any
+from typing import Any, Union
 
 # Determine which ProjectID we currently run in (as the app_identity module isn't available anymore)
 _, projectID = conf["xeno.application.projectID"] #google.auth.default()
 del _
 
+def utcNow():
+	return datetime.now(timezone.utc)
 
 def generateRandomString(length: int = 13) -> str:
 	"""
@@ -107,7 +109,7 @@ def _GAE_sendEMail(dests, name, skel, extraFiles=[], cc=None, bcc=None, replyTo=
 	"""
 	Internal function for using Google App Engine Email processing API.
 	"""
-	return True #FixME
+	return
 	headers, data = conf["viur.emailRenderer"](skel, name, dests, **kwargs)
 
 	xheader = {}
@@ -179,8 +181,10 @@ def sendEMailToAdmins(subject, body, sender=None):
 		:param sender: (optional) specify a different sender
 		:type sender: str
 	"""
+	return
 	if not sender:
 		sender = "viur@%s.appspotmail.com" % projectID
+
 	#FIXME
 	#mail.send_mail_to_admins(sender, "=?utf-8?B?%s?=" % base64.b64encode(subject.encode("UTF-8")),
 	#						 body.encode('ascii', 'xmlcharrefreplace'))
@@ -220,7 +224,7 @@ def markFileForDeletion(dlkey):
 	if fileObj:  # Its allready marked
 		return
 
-	fileObj = db.Entity("viur-deleted-files")
+	fileObj = db.Entity(db.Key("viur-deleted-files"))
 	fileObj["itercount"] = 0
 	fileObj["dlkey"] = str(dlkey)
 	db.Put(fileObj)
@@ -263,7 +267,8 @@ def hmacVerify(data: Any, signature: str) -> bool:
 	return hmac.compare_digest(hmacSign(data), signature)
 
 
-def downloadUrlFor(folder: str, fileName: str, derived: bool = False, expires: timedelta = timedelta(hours=1)) -> str:
+def downloadUrlFor(folder: str, fileName: str, derived: bool = False,
+				   expires: Union[timedelta, None] = timedelta(hours=1)) -> str:
 	if derived:
 		filePath = "%s/derived/%s" % (folder, fileName)
 	else:
@@ -273,6 +278,7 @@ def downloadUrlFor(folder: str, fileName: str, derived: bool = False, expires: t
 	resstr = hmacSign(sigStr)
 	return "/file/download/%s?sig=%s" % (sigStr.decode("ASCII"), resstr)
 
+
 def seoUrlToEntry(module, entry=None, skelType=None, language=None):
 	from viur.core import request, conf
 	lang = request.current.get().language
@@ -280,7 +286,7 @@ def seoUrlToEntry(module, entry=None, skelType=None, language=None):
 		module = conf["viur.languageModuleMap"][module][lang]
 	if not entry:
 		return "/%s/%s" % (lang, module)
-	#elif isinstance(entry, dict):
+	# elif isinstance(entry, dict):
 	else:
 		try:
 			currentSeoKeys = entry.get("viurCurrentSeoKeys")
@@ -295,6 +301,7 @@ def seoUrlToEntry(module, entry=None, skelType=None, language=None):
 		else:
 			return "/%s/%s" % (lang, module)
 		return "/%s/%s/%s" % (lang, module, seoKey)
+
 
 def seoUrlToFunction(module, function, render=None):
 	from viur.core import request, conf
@@ -318,3 +325,18 @@ def seoUrlToFunction(module, function, render=None):
 	return "/".join(pathComponents)
 
 
+def normalizeKey(key: Union[None, 'db.KeyClass']) -> Union[None, 'db.KeyClass']:
+	"""
+		Normalizes a datastore key (replacing _application with the current one)
+
+		:param key: Key to be normalized.
+
+		:return: Normalized key in string representation.
+	"""
+	if key is None:
+		return None
+	if key.parent:
+		parent = normalizeKey(key.parent)
+	else:
+		parent = None
+	return db.Key(key.kind, key.id_or_name, parent=parent)
