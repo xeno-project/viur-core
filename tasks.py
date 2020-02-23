@@ -224,7 +224,7 @@ class TaskHandler:
 				logging.debug("Successfully called task %s" % periodicTaskName)
 			if interval:
 				# Update its last-call timestamp
-				entry = db.Entity("viur-task-interval", name=periodicTaskName)
+				entry = db.Entity(("viur-task-interval",periodicTaskName))
 				entry["date"] = datetime.now()
 				db.Put(entry)
 		logging.debug("Periodic tasks complete")
