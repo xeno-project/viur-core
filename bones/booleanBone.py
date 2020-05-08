@@ -16,7 +16,7 @@ class booleanBone(baseBone):
 		assert defaultValue in [True, False]
 		super(booleanBone, self).__init__(defaultValue=defaultValue, *args, **kwargs)
 
-	def fromClient(self, valuesCache, name, data):
+	def fromClient(self, skel, name, data):
 		"""
 			Reads a value from the client.
 			If this value is valid for this bone,
@@ -40,12 +40,12 @@ class booleanBone(baseBone):
 			value = False
 		err = self.isInvalid(value)
 		if not err:
-			valuesCache[name] = value
+			skel[name] = value
 			return False
 		else:
 			return [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, err)]
 
-	def refresh(self, skeletonValues, name, skel) -> None:
+	def refresh(self, skel, boneName) -> None:
 		"""
 			Inverse of serialize. Evaluates whats
 			read from the datastore and populates
@@ -57,13 +57,12 @@ class booleanBone(baseBone):
 			:type expando: :class:`db.Entity`
 			:returns: bool
 		"""
-		super().refresh(skeletonValues, name, skel)
-		if name in skeletonValues.accessedValues:
-			val = skeletonValues.accessedValues[name]
+		if not isinstance(skel[boneName], bool):
+			val = skel[boneName]
 			if str(val) in self.trueStrs:
-				skeletonValues.accessedValues[name] = True
+				skel[boneName] = True
 			else:
-				skeletonValues.accessedValues[name] = False
+				skel[boneName] = False
 
 	def buildDBFilter(self, name, skel, dbFilter, rawFilter, prefix=None):
 		if name in rawFilter:

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
 from collections import OrderedDict
-from viur.core import errors, request, bones, utils
-from viur.core.skeleton import RefSkel, skeletonByKind, BaseSkeleton
-import logging
+from viur.core import errors, bones, utils
+from viur.core.skeleton import RefSkel, skeletonByKind, BaseSkeleton, SkeletonInstance
+from viur.core.contextvars import currentRequest
 
 class DefaultRender(object):
 
@@ -51,7 +51,7 @@ class DefaultRender(object):
 				"multiple": bone.multiple,
 				"format": bone.format,
 				"using": self.renderSkelStructure(bone.using()) if bone.using else None,
-				"relskel": self.renderSkelStructure(RefSkel.fromSkel(skeletonByKind(bone.kind), *bone.refKeys))
+				"relskel": self.renderSkelStructure(bone._refSkelCache())
 			})
 
 		elif bone.type == "record" or bone.type.startswith("record."):
@@ -153,41 +153,39 @@ class DefaultRender(object):
 		elif isinstance(bone, bones.relationalBone):
 			if isinstance(skel[key], list):
 				isFileBone = isinstance(bone, bones.fileBone)
-				refSkel, usingSkel = bone._getSkels()
+				#refSkel, usingSkel = bone._getSkels()
 				#refSkel = bone._refSkelCache
 				#usingSkel = bone._usingSkelCache
 				tmpList = []
 				for k in skel[key]:
-					refSkel.setValuesCache(k["dest"])
-					if usingSkel:
-						usingSkel.setValuesCache(k.get("rel", {}))
-						usingData = self.renderSkelValues(usingSkel)
-					else:
-						usingData = None
+					#refSkel.setValuesCache(k["dest"])
+					#if usingSkel:
+					#	usingSkel.setValuesCache(k.get("rel", {}))
+					#	usingData = self.renderSkelValues(usingSkel)
+					#else:
+					#	usingData = None
 					tmpList.append({
-						"dest": self.renderSkelValues(refSkel, injectDownloadURL=isFileBone),
-						"rel": usingData
+						"dest": self.renderSkelValues(k["dest"], injectDownloadURL=isFileBone),
+						"rel": self.renderSkelValues(k["rel"], injectDownloadURL=isFileBone) if k["rel"] else None,
 					})
 				return tmpList
 			elif isinstance(skel[key], dict):
-				refSkel, usingSkel = bone._getSkels()
-				refSkel.setValuesCache(skel[key]["dest"])
-				if usingSkel:
-					usingSkel.setValuesCache(skel[key].get("rel", {}))
-					usingData = self.renderSkelValues(usingSkel)
-				else:
-					usingData = None
+				#refSkel, usingSkel = bone._getSkels()
+				#refSkel.setValuesCache(skel[key]["dest"])
+				#if usingSkel:
+				#	usingSkel.setValuesCache(skel[key].get("rel", {}))
+				#	usingData = self.renderSkelValues(usingSkel)
+				#else:
+				#	usingData = None
 				return {
-					"dest": self.renderSkelValues(refSkel, injectDownloadURL=isinstance(bone, bones.fileBone)),
-					"rel": usingData
+					"dest": self.renderSkelValues(skel[key]["dest"], injectDownloadURL=isinstance(bone, bones.fileBone)),
+					"rel": self.renderSkelValues(skel[key]["rel"], injectDownloadURL=isinstance(bone, bones.fileBone)) if skel[key]["rel"] else None,
 				}
 		elif isinstance(bone, bones.recordBone):
-			usingSkel = bone.using()
 			tmpList = []
 			if skel[key]:
 				for k in skel[key]:
-					usingSkel.setValuesCache(k)
-					tmpList.append(self.renderSkelValues(usingSkel))
+					tmpList.append(self.renderSkelValues(k))
 			return tmpList
 		elif isinstance(bone, bones.keyBone):
 			v = skel["key"]
@@ -223,7 +221,7 @@ class DefaultRender(object):
 			vals = [self.renderSkelValues(x) for x in skel]
 			struct = self.renderSkelStructure(skel[0])
 			errors = None
-		elif isinstance(skel, BaseSkeleton):
+		elif isinstance(skel, SkeletonInstance):
 			vals = self.renderSkelValues(skel)
 			struct = self.renderSkelStructure(skel)
 			errors = [{"severity": x.severity.value, "fieldPath": x.fieldPath, "errorMessage": x.errorMessage} for x in skel.errors]
@@ -238,8 +236,7 @@ class DefaultRender(object):
 			"action": actionName,
 			"params": params
 		}
-
-		request.current.get().response.headers["Content-Type"] = "application/json"
+		currentRequest.get().response.headers["Content-Type"] = "application/json"
 		return json.dumps(res)
 
 	def view(self, skel, action="view", params=None, *args, **kwargs):
@@ -254,12 +251,9 @@ class DefaultRender(object):
 	def list(self, skellist, action="list", params=None, **kwargs):
 		res = {}
 		skels = []
-
 		for skel in skellist:
 			skels.append(self.renderSkelValues(skel))
-
 		res["skellist"] = skels
-
 		if skellist:
 			res["structure"] = self.renderSkelStructure(skellist.baseSkel)
 		else:
@@ -270,8 +264,7 @@ class DefaultRender(object):
 			res["cursor"] = None
 		res["action"] = action
 		res["params"] = params
-
-		request.current.get().response.headers["Content-Type"] = "application/json"
+		currentRequest.get().response.headers["Content-Type"] = "application/json"
 		return json.dumps(res)
 
 	def editItemSuccess(self, skel, params=None, **kwargs):
@@ -284,6 +277,8 @@ class DefaultRender(object):
 		return json.dumps("OKAY")
 
 	def listRootNodes(self, rootNodes, tpl=None, params=None):
+		for rn in rootNodes:
+			rn["key"] = rn["key"].to_legacy_urlsafe().decode("ASCII")
 		return json.dumps(rootNodes)
 
 	def listRootNodeContents(self, subdirs, entrys, tpl=None, params=None, **kwargs):

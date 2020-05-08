@@ -116,9 +116,9 @@ class relationalBone(baseBone):
 		self.updateLevel = updateLevel
 		self.consistency = consistency
 
-		#if getSystemInitialized():
-		#	from viur.core.skeleton import RefSkel, skeletonByKind
-		#	self._refSkelCache = RefSkel.fromSkel(skeletonByKind(self.kind), *self.refKeys)
+		if getSystemInitialized():
+			from viur.core.skeleton import RefSkel
+			self._refSkelCache = RefSkel.fromSkel(self.kind, *self.refKeys)
 		#	self._usingSkelCache = using() if using else None
 		#else:
 		#	self._refSkelCache = None
@@ -126,13 +126,14 @@ class relationalBone(baseBone):
 
 	def setSystemInitialized(self):
 		super(relationalBone, self).setSystemInitialized()
+		from viur.core.skeleton import RefSkel
+		self._refSkelCache = RefSkel.fromSkel(self.kind, *self.refKeys)
 		#from viur.core.skeleton import RefSkel, skeletonByKind
 		#self._refSkelCache = RefSkel.fromSkel(skeletonByKind(self.kind), *self.refKeys)
 		#self._usingSkelCache = self.using() if self.using else None
 
 	def _getSkels(self):
-		from viur.core.skeleton import RefSkel, skeletonByKind
-		refSkel = RefSkel.fromSkel(skeletonByKind(self.kind), *self.refKeys)
+		refSkel = self._refSkelCache()
 		usingSkel = self.using() if self.using else None
 		return refSkel, usingSkel
 
@@ -155,132 +156,132 @@ class relationalBone(baseBone):
 		if self.using is not None:
 			#usingSkel.setValuesCache(db.Entity())
 			usingSkel.unserialize(value["rel"] or db.Entity())
-			usingData = usingSkel.getValuesCache()
+			usingData = usingSkel
 		else:
 			usingData = None
-		return {"dest": relSkel.getValuesCache(), "rel": usingData}
+		return {"dest": relSkel, "rel": usingData}
 
-	def unserialize(self, skeletonValues, name):
-		if name in skeletonValues.entity:
-			val = skeletonValues.entity[name]
+	def unserialize(self, skel, name):
+		if name in skel.dbEntity:
+			val = skel.dbEntity[name]
 			if self.multiple:
-				skeletonValues.accessedValues[name] = []
+				skel.accessedValues[name] = []
 				if not val:
 					return True
 				if isinstance(val, list):
 					for res in val:
 						try:
-							skeletonValues.accessedValues[name].append(self._restoreValueFromDatastore(res))
+							skel.accessedValues[name].append(self._restoreValueFromDatastore(res))
 						except:
 							raise
 							pass
 				else:
 					try:
-						skeletonValues.accessedValues[name].append(self._restoreValueFromDatastore(val))
+						skel.accessedValues[name].append(self._restoreValueFromDatastore(val))
 					except:
 						raise
 						pass
 			else:
-				skeletonValues.accessedValues[name] = None
+				skel.accessedValues[name] = None
 				if isinstance(val, list) and len(val) > 0:
 					try:
-						skeletonValues.accessedValues[name] = self._restoreValueFromDatastore(val[0])
+						skel.accessedValues[name] = self._restoreValueFromDatastore(val[0])
 					except:
 						raise
 						pass
 				else:
 					if val:
 						try:
-							skeletonValues.accessedValues[name] = self._restoreValueFromDatastore(val)
+							skel.accessedValues[name] = self._restoreValueFromDatastore(val)
 						except:
 							raise
 							pass
 					else:
-						skeletonValues.accessedValues[name] = None
+						skel.accessedValues[name] = None
 			return True
 		else:
 			return False
 
-	def serialize(self, skeletonValues, name):
-		oldRelationalLocks = set(skeletonValues.entity.get("%s_outgoingRelationalLocks" % name) or [])
+	def serialize(self, skel, name):
+		oldRelationalLocks = set(skel.dbEntity.get("%s_outgoingRelationalLocks" % name) or [])
 		newRelationalLocks = set()
-		_refSkelCache, _usingSkelCache = self._getSkels()
 		# Clean old properties from entry (prevent name collision)
-		for k in list(skeletonValues.entity.keys()):
+		for k in list(skel.dbEntity.keys()):
 			if k.startswith("%s." % name):
-				del skeletonValues.entity[k]
-		if name not in skeletonValues.accessedValues or not skeletonValues.accessedValues[name]:
-			skeletonValues.entity[name] = None
+				del skel.dbEntity[k]
+		if name not in skel.accessedValues or not skel.accessedValues[name]:
+			skel.dbEntity[name] = None
 		else:
 			if self.multiple:
 				res = []
-				refSkel = _refSkelCache
-				usingSkel = _usingSkelCache
-				for val in skeletonValues.accessedValues[name]:
+				for val in skel.accessedValues[name]:
 					if val["dest"]:
-						refSkel.setValuesCache(val["dest"])
-						refData = refSkel.serialize()
-						newRelationalLocks.add(refSkel["key"])
+						refData = val["dest"].serialize()
+						newRelationalLocks.add(val["dest"]["key"])
 					else:
 						refData = None
-					if usingSkel and val["rel"]:
-						usingSkel.setValuesCache(val["rel"])
-						usingData = usingSkel.serialize()
+					if val["rel"]:
+						usingData = val["rel"].serialize()
 					else:
 						usingData = None
 					r = {"rel": usingData, "dest": refData}
 					res.append(r)
-				skeletonValues.entity[name] = res
+					skel.dbEntity[name] = res
 			else:
-				refSkel = _refSkelCache
-				usingSkel = _usingSkelCache
-				if skeletonValues.accessedValues[name]["dest"]:
-					refSkel.setValuesCache(skeletonValues.accessedValues[name]["dest"])
-					refData = refSkel.serialize()
-					newRelationalLocks.add(refSkel["key"])
+				if skel.accessedValues[name]["dest"]:
+					refData = skel.accessedValues[name]["dest"].serialize()
+					newRelationalLocks.add(skel.accessedValues[name]["dest"]["key"])
 				else:
 					refData = None
-				if usingSkel and skeletonValues.accessedValues[name]["rel"]:
-					usingSkel.setValuesCache(skeletonValues.accessedValues[name]["rel"])
-					usingData = usingSkel.serialize()
+				if skel.accessedValues[name]["rel"]:
+					usingData = skel.accessedValues[name]["rel"].serialize()
 				else:
 					usingData = None
 				r = {"rel": usingData, "dest": refData}
-				skeletonValues.entity[name] = r
-				#entity.set(name, r, False)
-				# Copy attrs of our referenced entity in
-
-				# FIXME!!! vvvv
-				#if refData:
-				#	for k, v in refData.items():
-				#		entity.set("%s.dest.%s" % (name, k), v, True)
-				#if usingData:
-				#	for k, v in usingData.items():
-				#		entity.set("%s.rel.%s" % (name, k), v, True)
+				skel.dbEntity[name] = r
 		# Ensure outgoing Locks are up2date
 		if self.consistency != RelationalConsistency.PreventDeletion:
 			# We don't need to lock anything, but may delete old locks held
 			newRelationalLocks = set()
 		# We should always run inside a transaction so we can safely get+put
-		skeletonValues.entity["%s_outgoingRelationalLocks" % name] = list(newRelationalLocks)
+		skel.dbEntity["%s_outgoingRelationalLocks" % name] = list(newRelationalLocks)
 		for newLock in newRelationalLocks - oldRelationalLocks:
 			# Lock new Entry
-			referencedObj = db.Get(db.Key(self.kind, newLock))
+			referencedObj = db.Get(newLock)
 			assert referencedObj, "Programming error detected?"
 			if not referencedObj.get("viur_incomming_relational_locks"):
 				referencedObj["viur_incomming_relational_locks"] = []
-			assert skeletonValues.entity.name not in referencedObj["viur_incomming_relational_locks"]
-			referencedObj["viur_incomming_relational_locks"].append(skeletonValues.entity.name)
+			assert skel["key"] not in referencedObj["viur_incomming_relational_locks"]
+			referencedObj["viur_incomming_relational_locks"].append(skel["key"])
 			db.Put(referencedObj)
 		for oldLock in oldRelationalLocks - newRelationalLocks:
 			# Remove Lock
-			referencedObj = db.Get(db.Key(self.kind, oldLock))
+			referencedObj = db.Get(oldLock)
 			assert referencedObj, "Programming error detected?"
 			assert isinstance(referencedObj.get("viur_incomming_relational_locks"), list), "Programming error detected?"
-			assert skeletonValues.entity.name in referencedObj["viur_incomming_relational_locks"], "Programming error detected?"
-			referencedObj["viur_incomming_relational_locks"].remove(skeletonValues.entity.name)
+			assert skel["key"] in referencedObj["viur_incomming_relational_locks"], "Programming error detected?"
+			referencedObj["viur_incomming_relational_locks"].remove(skel["key"])
 			db.Put(referencedObj)
 		return True
+
+	def delete(self, skel: 'viur.core.skeleton.SkeletonInstance', name: str):
+		"""
+			Ensure any outgoing relational lock is cleared
+		:param skel:
+		:param name:
+		:return:
+		"""
+		if skel.dbEntity.get("%s_outgoingRelationalLocks" % name):
+			for refKey in skel.dbEntity["%s_outgoingRelationalLocks" % name]:
+				referencedEntry = db.Get(refKey)
+				if not referencedEntry:
+					logging.warning("Programming error detected: Entry %s is gone despite lock" % refKey)
+					continue
+				incommingLocks = referencedEntry.get("viur_incomming_relational_locks", [])
+				# We remove any reference to ourself as multiple bones may hold Locks to the same entry
+				referencedEntry["viur_incomming_relational_locks"] = [x for x in incommingLocks if x != skel["key"]]
+				db.Put(referencedEntry)
+
 
 	def postSavedHandler(self, skel, boneName, key):
 		if not skel[boneName]:
@@ -289,42 +290,31 @@ class relationalBone(baseBone):
 			values = [dict((k, v) for k, v in skel[boneName].items())]
 		else:
 			values = [dict((k, v) for k, v in x.items()) for x in skel[boneName]]
-		_refSkelCache, _usingSkelCache = self._getSkels()
 		parentValues = db.Entity()
-		srcEntity = skel.getValuesCache().entity
+		srcEntity = skel.dbEntity
 		parentValues.key = srcEntity.key
 		for boneKey in (self.parentKeys or []):
 			parentValues[boneKey] = srcEntity.get(boneKey)
-
-		dbVals = db.Query("viur-relations")  # skel.kindName+"_"+self.kind+"_"+key
+		dbVals = db.Query("viur-relations")
 		dbVals.filter("viur_src_kind =", skel.kindName)
 		dbVals.filter("viur_dest_kind =", self.kind)
 		dbVals.filter("viur_src_property =", boneName)
 		dbVals.filter("src.__key__ =", key)
-
 		for dbObj in dbVals.iter():
 			try:
-				if not dbObj["dest"].key in [x["dest"].entity.key for x in values]:  # Relation has been removed
+				if not dbObj["dest"].key in [x["dest"]["key"] for x in values]:  # Relation has been removed
 					db.Delete(dbObj.key)
 					continue
 			except:  # This entry is corrupt
 				db.Delete(dbObj.key)
 			else:  # Relation: Updated
-				data = [x for x in values if x["dest"].entity.key == dbObj["dest"].key][0]
+				data = [x for x in values if x["dest"]["key"] == dbObj["dest"].key][0]
 				# Write our (updated) values in
-				refSkel = _refSkelCache
-				refSkel.setValuesCache(data["dest"])
+				refSkel = data["dest"]
 				dbObj["dest"] = refSkel.serialize()
-				# for k, v in refSkel.serialize().items():
-				#	dbObj["dest_" + k] = v
-				# for k, v in parentValues.items():
-				#	dbObj["src_" + k] = v
 				dbObj["src"] = parentValues
 				if self.using is not None:
-					usingSkel = _usingSkelCache
-					usingSkel.setValuesCache(data["rel"])
-					# for k, v in usingSkel.serialize().items():
-					#	dbObj["rel." + k] = v
+					usingSkel = data["rel"]
 					dbObj["rel"] = usingSkel.serialize()
 				dbObj["viur_delayed_update_tag"] = time()
 				dbObj["viur_relational_updateLevel"] = self.updateLevel
@@ -332,30 +322,18 @@ class relationalBone(baseBone):
 				dbObj["viur_foreign_keys"] = self.refKeys
 				db.Put(dbObj)
 				values.remove(data)
-
 		# Add any new Relation
 		for val in values:
-			dbObj = db.Entity(db.Key("viur-relations"))  # skel.kindName+"_"+self.kind+"_"+key
-			refSkel = _refSkelCache
-			refSkel.setValuesCache(val["dest"])
+			dbObj = db.Entity(db.Key("viur-relations"))
+			refSkel = val["dest"]
 			dbObj["dest"] = refSkel.serialize()
-			# for k, v in refSkel.serialize().items():
-			#	dbObj["dest_" + k] = v
-			# for k, v in parentValues.items():
-			#	dbObj["src_" + k] = v
 			dbObj["src"] = parentValues
 			if self.using is not None:
-				usingSkel = _usingSkelCache
-				usingSkel.setValuesCache(val["rel"])
-				# for k, v in usingSkel.serialize().items():
-				#	dbObj["rel_" + k] = v
+				usingSkel = val["rel"]
 				dbObj["rel"] = usingSkel.serialize()
-
 			dbObj["viur_delayed_update_tag"] = time()
 			dbObj["viur_src_kind"] = skel.kindName  # The kind of the entry referencing
-			# dbObj[ "viur_src_key" ] = str( key ) #The key of the entry referencing
 			dbObj["viur_src_property"] = boneName  # The key of the bone referencing
-			# dbObj[ "viur_dest_key" ] = val["key"]
 			dbObj["viur_dest_kind"] = self.kind
 			dbObj["viur_relational_updateLevel"] = self.updateLevel
 			dbObj["viur_relational_consistency"] = self.consistency.value
@@ -373,7 +351,7 @@ class relationalBone(baseBone):
 	def isInvalid(self, key):
 		return False
 
-	def fromClient(self, valuesCache, name, data):
+	def fromClient(self, skel, name, data):
 		"""
 			Reads a value from the client.
 			If this value is valid for this bone,
@@ -388,31 +366,25 @@ class relationalBone(baseBone):
 			:type data: dict
 			:returns: None or String
 		"""
-		# return [ReadFromClientError(ReadFromClientErrorSeverity.Invalid, name, "Not yet fixed")]
 		if not name in data and not any(x.startswith("%s." % name) for x in data):
 			return [ReadFromClientError(ReadFromClientErrorSeverity.NotSet, name, "Field not submitted")]
-		_refSkelCache, _usingSkelCache = self._getSkels()
-		oldValues = valuesCache.get(name, None)
-		valuesCache[name] = []
+		oldValues = skel[name]
+		skel[name] = []
 		tmpRes = {}
-
 		clientPrefix = "%s." % name
-
 		for k, v in data.items():
 			if k.startswith(clientPrefix) or k == name:
 				if k == name:
 					k = k.replace(name, "", 1)
 				else:
 					k = k.replace(clientPrefix, "", 1)
-
 				if "." in k:
 					try:
 						idx, bname = k.split(".", 1)
 						idx = int(idx)
 					except ValueError:
-						# We got some garbarge as input; don't try to parse it
+						# We got some garbage as input; don't try to parse it
 						continue
-
 				elif k.isdigit() and self.using is None:
 					idx = int(k)
 					bname = "key"
@@ -421,10 +393,8 @@ class relationalBone(baseBone):
 					bname = "key"
 				else:
 					continue
-
 				if not idx in tmpRes:
 					tmpRes[idx] = {}
-
 				if bname in tmpRes[idx]:
 					if isinstance(tmpRes[idx][bname], list):
 						tmpRes[idx][bname].append(v)
@@ -432,37 +402,36 @@ class relationalBone(baseBone):
 						tmpRes[idx][bname] = [tmpRes[idx][bname], v]
 				else:
 					tmpRes[idx][bname] = v
-
 		tmpList = [(k, v) for k, v in tmpRes.items() if "key" in v]
 		tmpList.sort(key=lambda k: k[0])
 		tmpList = [{"reltmp": v, "dest": {"key": v["key"]}} for k, v in tmpList]
 		errors = []
-		forceFail = False
 		if not tmpList and self.required:
-			return "No value selected!"
+			return [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "Field not submitted")]
 		for r in tmpList[:]:
+			if not r["dest"]["key"]:  # Key is set to empty string (clear that relation)
+				tmpList.remove(r)
+				continue
+			_refSkelCache, _usingSkelCache = self._getSkels()
 			# Rebuild the referenced entity data
 			isEntryFromBackup = False  # If the referenced entry has been deleted, restore information from
 			entry = None
-
+			dbKey = None
 			try:
-				entry = db.Get(db.keyHelper(r["dest"]["key"], self.kind))
+				dbKey = db.keyHelper(r["dest"]["key"], self.kind)
+				entry = db.Get(dbKey)
 				assert entry
 			except:  # Invalid key or something like that
 				logging.info("Invalid reference key >%s< detected on bone '%s'",
 							 r["dest"]["key"], name)
 				if isinstance(oldValues, dict):
-					if oldValues["dest"]["key"] == r["dest"]["key"]:
-						refSkel = _refSkelCache
-						refSkel.setValuesCache(oldValues["dest"])
-						entry = refSkel.serialize()
+					if oldValues["dest"]["key"] == dbKey:
+						entry = oldValues["dest"]
 						isEntryFromBackup = True
 				elif isinstance(oldValues, list):
 					for dbVal in oldValues:
-						if dbVal["dest"]["key"] == r["dest"]["key"]:
-							refSkel = _refSkelCache
-							refSkel.setValuesCache(dbVal["dest"])
-							entry = refSkel.serialize()
+						if dbVal["dest"]["key"] == dbKey:
+							entry = dbVal["dest"]
 							isEntryFromBackup = True
 				if not isEntryFromBackup:
 					if not self.multiple:  # We can stop here :/
@@ -471,12 +440,11 @@ class relationalBone(baseBone):
 					else:
 						tmpList.remove(r)
 						continue
-
 			if not entry or (
 				not isEntryFromBackup and not entry.key.kind == self.kind):  # Entry does not exist or has wrong type (is from another module)
 				if entry:
 					logging.error("I got a key, which kind doesn't match my type! (Got: %s, my type %s)" % (
-						entry.key().kind, self.kind))
+						entry.key.kind, self.kind))
 					errors.append(
 						ReadFromClientError(ReadFromClientErrorSeverity.Invalid, name,
 											"I got a key, which kind doesn't match my type!")
@@ -489,27 +457,21 @@ class relationalBone(baseBone):
 					tmp[k] = entry[k]
 			tmp.key = db.keyHelper(r["dest"]["key"], self.kind)
 			relSkel = _refSkelCache
-			relSkel.setValuesCache({})
 			relSkel.unserialize(tmp)
-			r["dest"] = relSkel.getValuesCache()
+			r["dest"] = relSkel
 			# Rebuild the refSkel data
 			if self.using is not None:
 				refSkel = _usingSkelCache
-				refSkel.unserialize({})
 				if not refSkel.fromClient(r["reltmp"]):
 					for error in refSkel.errors:
 						errors.append(
 							ReadFromClientError(error.severity, "%s.%s.%s" % (name, tmpList.index(r), error.fieldPath),
 												error.errorMessage)
 						)
-				# for k, v in refSkel.errors.items():
-				#	errorDict["%s.%s.%s" % (name, tmpList.index(r), k)] = v
-				#	forceFail = True
-				r["rel"] = refSkel.getValuesCache()
+				r["rel"] = refSkel
 			else:
 				r["rel"] = None
 			del r["reltmp"]
-
 		if self.multiple:
 			cleanList = []
 			for item in tmpList:
@@ -527,7 +489,7 @@ class relationalBone(baseBone):
 					ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "No value selected")
 				)
 			# errorDict[name] = "No value selected"
-			valuesCache[name] = tmpList
+			skel[name] = tmpList
 		else:
 			if tmpList:
 				val = tmpList[0]
@@ -535,7 +497,7 @@ class relationalBone(baseBone):
 				val = None
 			err = self.isInvalid(val)
 			if not err:
-				valuesCache[name] = val
+				skel[name] = val
 				if val is None:
 					# errorDict[name] = "No value selected"
 					errors.append(
@@ -803,67 +765,32 @@ class relationalBone(baseBone):
 						res.append("src.%s" % orderKey)
 		return (res)
 
-	def refresh(self, valuesCache, boneName, skel):
+	def refresh(self, skel, boneName):
 		"""
 			Refresh all values we might have cached from other entities.
 		"""
-		import logging
-		logging.error("REFRESH CURRENTLY DISABLED")
-		return
-
 		def updateInplace(relDict):
 			"""
 				Fetches the entity referenced by valDict["dest.key"] and updates all dest.* keys
 				accordingly
 			"""
-			if isinstance(relDict, dict) and "dest" in relDict:
-				valDict = relDict["dest"]
-			else:
+			if not (isinstance(relDict, dict) and "dest" in relDict):
 				logging.error("Invalid dictionary in updateInplace: %s" % relDict)
 				return
-
-			if "key" in valDict and valDict["key"]:
-				originalKey = valDict["key"]
-			else:
-				logging.error("Invalid dictionary in updateInplace: %s" % valDict)
+			newValues = db.Get(db.keyHelper(relDict["dest"]["key"], self.kind))
+			if newValues is None:
+				logging.info("The key %s does not exist" % relDict["dest"]["key"])
 				return
-
-			entityKey = originalKey
-			if originalKey != entityKey:
-				logging.info("Rewriting %s to %s" % (originalKey, entityKey))
-				valDict["key"] = entityKey
-
-			# Try to update referenced values;
-			# If the entity does not exist with this key, ignore
-			# (key was overidden above to have a new appid when transferred).
-			newValues = None
-
-			try:
-				newValues = db.Get((self.kind, entityKey))
-				assert newValues is not None
-			except db.EntityNotFoundError:
-				# This entity has been deleted
-				logging.info("The key %s does not exist" % entityKey)
-			except:
-				raise
-
-			if newValues:
-				for key in self._refSkelCache.keys():
-					if key == "key":
-						continue
-
-					getattr(self._refSkelCache, key).unserialize(valDict, key, newValues)
-
-		if not valuesCache[boneName] or self.updateLevel == 2:
+			for boneName in self.refKeys:
+				if boneName != "key" and boneName in newValues:
+					relDict["dest"].dbEntity[boneName] = newValues[boneName]
+		if not skel[boneName] or self.updateLevel == 2:
 			return
-
 		logging.debug("Refreshing relationalBone %s of %s" % (boneName, skel.kindName))
-
-		if isinstance(valuesCache[boneName], dict):
-			updateInplace(valuesCache[boneName])
-
-		elif isinstance(valuesCache[boneName], list):
-			for k in valuesCache[boneName]:
+		if isinstance(skel[boneName], dict):
+			updateInplace(skel[boneName])
+		elif isinstance(skel[boneName], list):
+			for k in skel[boneName]:
 				updateInplace(k)
 
 	def getSearchTags(self, values, key):
@@ -926,7 +853,7 @@ class relationalBone(baseBone):
 
 		return res
 
-	def setBoneValue(self, valuesCache, boneName, value, append, *args, **kwargs):
+	def setBoneValue(self, skel, boneName, value, append, *args, **kwargs):
 		"""
 			Set our value to 'value'.
 			Santy-Checks are performed; if the value is invalid, we flip our value back to its original
@@ -951,7 +878,7 @@ class relationalBone(baseBone):
 			if not entity:
 				logging.error("Key %s not found" % str(key))
 				return None
-			relSkel = RefSkel.fromSkel(skeletonByKind(self.kind), *self.refKeys)
+			relSkel = self._refSkelCache()
 			relSkel.unserialize(entity)
 			return relSkel
 
@@ -995,21 +922,20 @@ class relationalBone(baseBone):
 			relSkel = relSkelFromKey(realValue[0])
 			if not relSkel:
 				return False
-			valuesCache[boneName] = {"dest": relSkel.getValuesCache(),
-									 "rel": realValue[1].getValuesCache() if realValue[1] else None}
+			skel[boneName] = {"dest": relSkel, "rel": realValue[1] if realValue[1] else None}
 		else:
 			tmpRes = []
 			for val in realValue:
 				relSkel = relSkelFromKey(val[0])
 				if not relSkel:
 					return False
-				tmpRes.append({"dest": relSkel.getValuesCache(), "rel": val[1].getValuesCache() if val[1] else None})
+				tmpRes.append({"dest": relSkel, "rel": val[1] if val[1] else None})
 			if append:
-				if boneName not in valuesCache or not isinstance(valuesCache[boneName], list):
-					valuesCache[boneName] = []
-				valuesCache[boneName].extend(tmpRes)
+				if boneName not in skel or not isinstance(skel[boneName], list):
+					skel[boneName] = []
+				skel[boneName].extend(tmpRes)
 			else:
-				valuesCache[boneName] = tmpRes
+				skel[boneName] = tmpRes
 		return True
 
 	def getReferencedBlobs(self, skel, name):
@@ -1017,9 +943,8 @@ class relationalBone(baseBone):
 			Returns the list of blob keys referenced from this bone
 		"""
 
-		def blobsFromSkel(skel, valuesCache):
+		def blobsFromSkel(skel):
 			blobList = set()
-			skel.setValuesCache(valuesCache)
 			for key, _bone in skel.items():
 				blobList.update(_bone.getReferencedBlobs(skel, key))
 			return blobList
@@ -1033,14 +958,14 @@ class relationalBone(baseBone):
 		if isinstance(value, list):
 			for myDict in value:
 				if myDict["dest"]:
-					res.update(blobsFromSkel(_refSkelCache, myDict["dest"]))
+					res.update(blobsFromSkel(myDict["dest"]))
 				if myDict["rel"]:
-					res.update(blobsFromSkel(_usingSkelCache, myDict["rel"]))
+					res.update(blobsFromSkel(myDict["rel"]))
 		elif isinstance(value, dict):
 			if value["dest"]:
-				res.update(blobsFromSkel(_refSkelCache, value["dest"]))
+				res.update(blobsFromSkel(value["dest"]))
 			if "rel" in value and value["rel"]:
-				res.update(blobsFromSkel(_usingSkelCache, value["rel"]))
+				res.update(blobsFromSkel(value["rel"]))
 		return res
 
 	def getUniquePropertyIndexValues(self, valuesCache: dict, name: str) -> List[str]:

@@ -3,14 +3,15 @@ from . import utils as jinjaUtils
 from .wrap import ListWrapper, SkelListWrapper
 
 from viur.core import utils, request, errors, securitykey
-from viur.core.skeleton import Skeleton, BaseSkeleton, RefSkel, skeletonByKind
+from viur.core.skeleton import Skeleton, BaseSkeleton, RefSkel, skeletonByKind, SkeletonInstance
 from viur.core.bones import *
 
 from collections import OrderedDict
-from jinja2 import Environment, FileSystemLoader, ChoiceLoader
+from jinja2 import Environment, FileSystemLoader, ChoiceLoader, BytecodeCache
 from viur.core.i18n import translate
 import os, logging, codecs
 from collections import namedtuple
+from viur.core.contextvars import currentRequest, currentSession, currentLanguage
 
 KeyValueWrapper = namedtuple("KeyValueWrapper", ["key", "descr"])
 
@@ -88,13 +89,14 @@ class Render(object):
 			htmlpath = self.htmlpath
 		else:
 			htmlpath = "html"
+		currReq = currentRequest.get()
 		if not ignoreStyle \
-				and "style" in request.current.get().kwargs \
-				and all([x in validChars for x in request.current.get().kwargs["style"].lower()]):
-			stylePostfix = "_" + request.current.get().kwargs["style"]
+				and "style" in currReq.kwargs \
+				and all([x in validChars for x in currReq.kwargs["style"].lower()]):
+			stylePostfix = "_" + currReq.kwargs["style"]
 		else:
 			stylePostfix = ""
-		lang = request.current.get().language  # session.current.getLanguage()
+		lang = currentLanguage.get()  # session.current.getLanguage()
 		fnames = [template + stylePostfix + ".html", template + ".html"]
 		if lang:
 			fnames = [os.path.join(lang, template + stylePostfix + ".html"),
@@ -256,55 +258,42 @@ class Render(object):
 			if isinstance(boneValue, list):
 				tmpList = []
 				for k in boneValue:
-					refSkel, usingSkel = bone._getSkels()
-					refSkel.setValuesCache(k["dest"])
 					if bone.using is None:
-						tmpList.append(self.collectSkelData(refSkel))
+						tmpList.append(self.collectSkelData(k["dest"]))
 					else:
 						#usingSkel = bone._usingSkelCache
 						if k["rel"]:
-							usingSkel.setValuesCache(k["rel"])
-							usingData = self.collectSkelData(usingSkel)
+							usingData = self.collectSkelData(k["rel"])
 						else:
 							usingData = None
 						tmpList.append({
-							"dest": self.collectSkelData(refSkel),
+							"dest": self.collectSkelData(k["dest"]),
 							"rel": usingData
 						})
 				return tmpList
 			elif isinstance(boneValue, dict):
-				refSkel, usingSkel = bone._getSkels()
-				refSkel.setValuesCache(boneValue["dest"])
-				refSkel.renderPreparation = self.renderBoneValue
 				if bone.using is None:
-					return refSkel
+					return self.collectSkelData(boneValue["dest"])
 				else:
 					#usingSkel = bone._usingSkelCache
 					if boneValue["rel"]:
-						usingSkel.setValuesCache(boneValue["rel"])
-						usingData = self.collectSkelData(usingSkel)
+						usingData = self.collectSkelData(boneValue["rel"])
 					else:
 						usingData = None
 
 					return {
-						"dest": self.collectSkelData(refSkel),
+						"dest": self.collectSkelData(boneValue["dest"]),
 						"rel": usingData
 					}
 		elif bone.type == "record" or bone.type.startswith("record."):
-			usingSkel = bone.using()
 			value = boneValue
-			if isinstance(value, list):
+			if value:
 				ret = []
 				for entry in value:
-					usingSkel.setValuesCache(entry)
-					ret.append(self.collectSkelData(usingSkel))
-
+					ret.append(self.collectSkelData(entry))
 				return ret
-			elif isinstance(value, dict):
-				usingSkel.setValuesCache(value)
-				return self.collectSkelData(usingSkel)
 		elif bone.type == "key":
-			return boneValue.id_or_name if boneValue else None
+			return boneValue.to_legacy_urlsafe().decode("ASCII") if boneValue else None
 		else:
 			return boneValue
 		return None
@@ -362,15 +351,13 @@ class Render(object):
 		skeybone = baseBone(descr="SecurityKey", readOnly=True, visible=False)
 		skel.skey = skeybone
 		skel["skey"] = securitykey.create()
-
-		if "nomissing" in request.current.get().kwargs and request.current.get().kwargs["nomissing"] == "1":
+		if currentRequest.get().kwargs.get("nomissing") == "1":
 			if isinstance(skel, BaseSkeleton):
 				super(BaseSkeleton, skel).__setattr__("errors", {})
-
 		return template.render(skel={"structure": self.renderSkelStructure(skel),
 									 "errors": skel.errors,
 									 "value": self.collectSkelData(skel)},
-							   params=params, **kwargs)
+								params=params, **kwargs)
 
 	def edit(self, skel, tpl=None, params=None, **kwargs):
 		"""
@@ -405,7 +392,7 @@ class Render(object):
 		skel.skey = skeybone
 		skel["skey"] = securitykey.create()
 
-		if "nomissing" in request.current.get().kwargs and request.current.get().kwargs["nomissing"] == "1":
+		if "nomissing" in currentRequest.get().kwargs.get("nomissing") == "1":
 			if isinstance(skel, BaseSkeleton):
 				super(BaseSkeleton, skel).__setattr__("errors", {})
 
@@ -522,7 +509,8 @@ class Render(object):
 		# resList = []
 		# for skel in skellist:
 		#	resList.append(self.collectSkelData(skel))
-		skellist.renderPreparation = self.renderBoneValue
+		for skel in skellist:
+			skel.renderPreparation = self.renderBoneValue
 		return template.render(skellist=skellist, params=params, **kwargs)  # SkelListWrapper(resList, skellist)
 
 	def listRootNodes(self, repos, tpl=None, params=None, **kwargs):
@@ -576,7 +564,7 @@ class Render(object):
 		tpl = tpl or self.viewTemplate
 		template = self.getEnv().get_template(self.getTemplateFileName(tpl))
 
-		if isinstance(skel, Skeleton):
+		if isinstance(skel, SkeletonInstance):
 			# res = self.collectSkelData(skel)
 			skel.renderPreparation = self.renderBoneValue
 		return template.render(skel=skel, params=params, **kwargs)

@@ -131,7 +131,7 @@ class baseBone(object):  # One Bone:
 			raise AttributeError("You cannot modify this Skeleton. Grab a copy using .clone() first")
 		super(baseBone, self).__setattr__(key, value)
 
-	def fromClient(self, valuesCache: dict, name: str, data: dict) -> Union[None, List[ReadFromClientError]]:
+	def fromClient(self, skel: 'SkeletonValues', name: str, data: dict) -> Union[None, List[ReadFromClientError]]:
 		"""
 			Reads a value from the client.
 			If this value is valid for this bone,
@@ -151,7 +151,7 @@ class baseBone(object):  # One Bone:
 		value = data[name]
 		err = self.isInvalid(value)
 		if not err:
-			valuesCache[name] = value
+			skel[name] = value
 			return None
 		else:
 			return [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, err)]
@@ -164,7 +164,7 @@ class baseBone(object):  # One Bone:
 		if value == None:
 			return "No value entered"
 
-	def serialize(self, skeletonValues, name) -> bool:
+	def serialize(self, skel, name) -> bool:
 		"""
 			Serializes this bone into something we
 			can write into the datastore.
@@ -173,12 +173,12 @@ class baseBone(object):  # One Bone:
 			:type name: str
 			:returns: dict
 		"""
-		if name in skeletonValues.accessedValues:
-			skeletonValues.entity[name] = skeletonValues.accessedValues[name]
+		if name in skel.accessedValues:
+			skel.dbEntity[name] = skel.accessedValues[name]
 			return True
 		return False
 
-	def unserialize(self, skeletonValues: 'viur.core.skeleton.SkeletonValues', name: str) -> bool:
+	def unserialize(self, skel: 'viur.core.skeleton.SkeletonInstance', name: str) -> bool:
 		"""
 			Inverse of serialize. Evaluates whats
 			read from the datastore and populates
@@ -189,10 +189,19 @@ class baseBone(object):  # One Bone:
 			:type expando: db.Entity
 			:returns: bool
 		"""
-		if name in skeletonValues.entity:
-			skeletonValues.accessedValues[name] = skeletonValues.entity[name]
+		if name in skel.dbEntity:
+			skel.accessedValues[name] = skel.dbEntity[name]
 			return True
 		return False
+
+	def delete(self, skel: 'viur.core.skeleton.SkeletonInstance', name: str):
+		"""
+			Like postDeletedHandler, but runs inside the transaction
+		:param skel:
+		:param name:
+		:return:
+		"""
+		pass
 
 	def buildDBFilter(self, name, skel, dbFilter, rawFilter, prefix=None):
 		"""
@@ -373,7 +382,7 @@ class baseBone(object):  # One Bone:
 		"""
 		pass
 
-	def refresh(self, skeletonValues, boneName, skel) -> None:
+	def refresh(self, skel, boneName) -> None:
 		"""
 			Refresh all values we might have cached from other entities.
 		"""
@@ -391,7 +400,7 @@ class baseBone(object):  # One Bone:
 			return
 		valuesCache[boneName] = copy.deepcopy(otherSkel.valuesCache.get(boneName, None))
 
-	def setBoneValue(self, valuesCache, boneName, value, append, *args, **kwargs):
+	def setBoneValue(self, skel, boneName, value, append, *args, **kwargs):
 		"""
 			Set our value to 'value'.
 			Santy-Checks are performed; if the value is invalid, we flip our value back to its original
@@ -412,7 +421,7 @@ class baseBone(object):  # One Bone:
 		"""
 		if append:
 			raise ValueError("append is not possible on %s bones" % self.type)
-		res = self.fromClient(valuesCache, boneName, {boneName: value})
+		res = self.fromClient(skel, boneName, {boneName: value})
 		if not res:
 			return True
 		else:

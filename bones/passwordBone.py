@@ -86,22 +86,24 @@ class passwordBone(stringBone):
 
 		return False
 
-	def fromClient(self, valuesCache, name, data):
+	def fromClient(self, skel, name, data):
 		if not name in data:
 			return [ReadFromClientError(ReadFromClientErrorSeverity.NotSet, name, "Field not submitted")]
 		value = data.get(name)
 		if not value:
+			# Password-Bone is special: As it cannot be read don't set back no None if no value is given
+			# This means an once set password can only be changed - but never deleted.
 			return [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "No value entered")]
 		err = self.isInvalid(value)
 		if err:
 			return [ReadFromClientError(ReadFromClientErrorSeverity.Invalid, name, err)]
-		valuesCache[name] = value
+		skel[name] = value
 
-	def serialize(self, skeletonValues, name):
-		if name in skeletonValues.accessedValues and skeletonValues.accessedValues[name]:
+	def serialize(self, skel, name):
+		if name in skel.accessedValues and skel.accessedValues[name]:
 			salt = utils.generateRandomString(self.saltLength)
-			passwd = pbkdf2(skeletonValues.accessedValues[name][: conf["viur.maxPasswordLength"]], salt)
-			skeletonValues.entity[name] = {"pwhash": passwd, "salt": salt}
+			passwd = pbkdf2(skel.accessedValues[name][: conf["viur.maxPasswordLength"]], salt)
+			skel.dbEntity[name] = {"pwhash": passwd, "salt": salt}
 			return True
 		return False
 

@@ -10,16 +10,11 @@ class recordBone(baseBone):
 
 	def __init__(self, using, format=None, multiple=True, indexed=False, *args, **kwargs):
 		super(recordBone, self).__init__(multiple=multiple, *args, **kwargs)
-
 		self.using = using
 		self.format = format
 		if not format or indexed or not multiple:
 			raise NotImplementedError("A recordBone must not be indexed, must be multiple and must have a format set")
 
-		#if getSystemInitialized():
-		#	self._usingSkelCache = using()
-		#else:
-		#	self._usingSkelCache = None
 
 	def setSystemInitialized(self):
 		super(recordBone, self).setSystemInitialized()
@@ -35,93 +30,74 @@ class recordBone(baseBone):
 		"""
 		value = val
 		assert isinstance(value, dict), "Read something from the datastore thats not a dict: %s" % str(type(value))
-
 		usingSkel = self.using()
-		usingSkel.setValuesCache({})
 		usingSkel.unserialize(value)
-		return usingSkel.getValuesCache()
+		return usingSkel
 
-	def unserialize(self, skeletonValues, name):
-		if name not in skeletonValues.entity:
+	def unserialize(self, skel, name):
+		if name not in skel.dbEntity:
 			return False
-		val = skeletonValues.entity[name]
-		skeletonValues.accessedValues[name] = []
+		val = skel.dbEntity[name]
+		skel.accessedValues[name] = []
 		if not val:
 			return True
 		if isinstance(val, list):
 			for res in val:
 				try:
-					skeletonValues.accessedValues[name].append(self._restoreValueFromDatastore(res))
+					skel.accessedValues[name].append(self._restoreValueFromDatastore(res))
 				except:
 					raise
 		else:
 			try:
-				skeletonValues.accessedValues[name].append(self._restoreValueFromDatastore(val))
+				skel.accessedValues[name].append(self._restoreValueFromDatastore(val))
 			except:
 				raise
-
 		return True
 
-	def serialize(self, skeletonValues, name):
-		if name in skeletonValues.accessedValues:
-			value = skeletonValues.accessedValues[name]
-			print("xxxxx")
-			print(value)
+	def serialize(self, skel, name):
+		if name in skel.accessedValues:
+			value = skel.accessedValues[name]
 			if not value:
-				skeletonValues.entity[name] = []
+				skel.dbEntity[name] = []
 			else:
-				usingSkel = self.using()
 				res = []
 				for val in value:
-					usingSkel.setValuesCache(val)
-					res.append(usingSkel.serialize())
-				skeletonValues.entity[name] = res
+					res.append(val.serialize())
+				skel.dbEntity[name] = res
 			return True
 		return False
 
-	def fromClient(self, valuesCache, name, data):
+	def fromClient(self, skel, name, data):
 		#return [ReadFromClientError(ReadFromClientErrorSeverity.Invalid, name, "Not yet fixed")]
 		if not name in data and not any(x.startswith("%s." % name) for x in data):
 			return [ReadFromClientError(ReadFromClientErrorSeverity.NotSet, name, "Field not submitted")]
-
-		valuesCache[name] = []
+		skel[name] = []
 		tmpRes = {}
-
 		clientPrefix = "%s." % name
-
 		for k, v in data.items():
-			# print(k, v)
-
 			if k.startswith(clientPrefix) or k == name:
 				if k == name:
 					k = k.replace(name, "", 1)
-
 				else:
 					k = k.replace(clientPrefix, "", 1)
-
 				if "." in k:
 					try:
 						idx, bname = k.split(".", 1)
 						idx = int(idx)
 					except ValueError:
 						idx = 0
-
 						try:
 							bname = k.split(".", 1)
 						except ValueError:
 							# We got some garbage as input; don't try to parse it
 							continue
-
 				else:
 					idx = 0
 					bname = k
-
 				if not bname:
 					continue
-
 				if not idx in tmpRes:
 					tmpRes[idx] = {}
-
 				if bname in tmpRes[idx]:
 					if isinstance(tmpRes[idx][bname], list):
 						tmpRes[idx][bname].append(v)
@@ -129,25 +105,18 @@ class recordBone(baseBone):
 						tmpRes[idx][bname] = [tmpRes[idx][bname], v]
 				else:
 					tmpRes[idx][bname] = v
-
 		tmpList = [tmpRes[k] for k in sorted(tmpRes.keys())]
-
 		errors = []
-
 		for i, r in enumerate(tmpList[:]):
 			usingSkel = self.using()
 			#usingSkel.setValuesCache(Skeletccc)
-			usingSkel.unserialize({})
-
 			if not usingSkel.fromClient(r):
 				for error in usingSkel.errors:
 					errors.append(
 						ReadFromClientError(error.severity, "%s.%s.%s" % (name, i, error.fieldPath), error.errorMessage)
 					)
-			tmpList[i] = usingSkel.getValuesCache()
-
+			tmpList[i] = usingSkel
 		cleanList = []
-
 		for item in tmpList:
 			err = self.isInvalid(item)
 			if err:
@@ -156,27 +125,13 @@ class recordBone(baseBone):
 				)
 			else:
 				cleanList.append(item)
-
-		valuesCache[name] = tmpList
-
+		skel[name] = cleanList
 		if not cleanList:
 			errors.append(
 				ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "No value selected")
 			)
-
 		if errors:
 			return errors
-
-
-	def setBoneValue(self, valuesCache, boneName, value, append):
-		if not isinstance(value, self.using):
-			raise ValueError("value (=%r) must be of type %r" % (type(value), self.using))
-
-		if valuesCache[boneName] is None or not append:
-			valuesCache[boneName] = []
-
-		valuesCache[boneName].append(copy.deepcopy(value.getValuesCache()))
-		return True
 
 	def getSearchTags(self, values, key):
 		def getValues(res, skel, valuesCache):

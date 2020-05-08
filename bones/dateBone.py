@@ -5,6 +5,7 @@ from time import time, mktime
 from datetime import time, datetime, timedelta
 from viur.core.bones.bone import ReadFromClientError, ReadFromClientErrorSeverity
 from viur.core.i18n import translate
+from viur.core.contextvars import currentRequest, currentRequestData
 import logging
 
 try:
@@ -85,7 +86,7 @@ class dateBone(baseBone):
 		self.time = time
 		self.localize = localize
 
-	def fromClient(self, valuesCache, name, data):
+	def fromClient(self, skel, name, data):
 		"""
 			Reads a value from the client.
 			If this value is valid for this bone,
@@ -104,6 +105,7 @@ class dateBone(baseBone):
 			return [ReadFromClientError(ReadFromClientErrorSeverity.NotSet, name, "Field not submitted")]
 		rawValue = data[name]
 		if not rawValue:
+			skel[name] = None
 			return [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "No value selected")]
 		elif str(rawValue).replace("-", "", 1).replace(".", "", 1).isdigit():
 			if int(rawValue) < -1 * (2 ** 30) or int(rawValue) > (2 ** 31) - 2:
@@ -163,7 +165,7 @@ class dateBone(baseBone):
 		err = self.isInvalid(value)
 		if err:
 			return [ReadFromClientError(ReadFromClientErrorSeverity.Invalid, name, err)]
-		valuesCache[name] = value
+		skel[name] = value
 
 	def isInvalid(self, value):
 		"""
@@ -181,18 +183,19 @@ class dateBone(baseBone):
 		If it cant be guessed, a safe default (UTC) is used
 		"""
 		timeZone = "UTC"  # Default fallback
+		currReqData = currentRequestData.get()
 		try:
 			# Check the local cache first
-			if "timeZone" in request.current.requestData():
-				return (request.current.requestData()["timeZone"])
-			headers = request.current.get().request.headers
+			if "timeZone" in currReqData:
+				return currReqData["timeZone"]
+			headers = currentRequest.get().request.headers
 			if "X-Appengine-Country" in headers:
 				country = headers["X-Appengine-Country"]
 			else:  # Maybe local development Server - no way to guess it here
-				return (timeZone)
+				return timeZone
 			tzList = pytz.country_timezones[country]
 		except:  # Non-User generated request (deferred call; task queue etc), or no pytz
-			return (timeZone)
+			return timeZone
 		if len(tzList) == 1:  # Fine - the country has exactly one timezone
 			timeZone = tzList[0]
 		elif country.lower() == "us":  # Fallback for the US
@@ -202,8 +205,8 @@ class dateBone(baseBone):
 		else:  # The user is in a Country which has more than one timezone
 			# Fixme: Is there any equivalent of EST for australia?
 			pass
-		request.current.requestData()["timeZone"] = timeZone  # Cache the result
-		return (timeZone)
+			currReqData["timeZone"] = timeZone  # Cache the result
+		return timeZone
 
 	def readLocalized(self, value):
 		"""Read a (probably localized Value) from the Client and convert it back to UTC"""
@@ -228,9 +231,9 @@ class dateBone(baseBone):
 			res = utc.normalize(res.astimezone(utc))
 		return (res)
 
-	def serialize(self, skeletonValues, name) -> bool:
-		if name in skeletonValues.accessedValues:
-			res = skeletonValues.accessedValues[name]
+	def serialize(self, skel, name) -> bool:
+		if name in skel.accessedValues:
+			res = skel.accessedValues[name]
 			if res:
 				res = self.readLocalized(datetime.now().strptime(res.strftime("%d.%m.%Y %H:%M:%S"), "%d.%m.%Y %H:%M:%S"))
 					# Crop unwanted values to zero
@@ -238,26 +241,26 @@ class dateBone(baseBone):
 					res = res.replace(hour=0, minute=0, second=0, microsecond=0)
 				elif not self.date:
 					res = res.replace(year=1970, month=1, day=1)
-			skeletonValues.entity[name] = res
+				skel.dbEntity[name] = res
 			return True
 		return False
 
-	def unserialize(self, skeletonValues, name) -> bool:
-		if name in skeletonValues.entity:
-			value = skeletonValues.entity[name]
+	def unserialize(self, skel, name) -> bool:
+		if name in skel.dbEntity:
+			value = skel.dbEntity[name]
 			if value and (isinstance(value, float) or isinstance(value, int)):
 				if self.date:
-					self.setLocalized(skeletonValues, name, ExtendedDateTime.fromtimestamp(value))
+					self.setLocalized(skel, name, ExtendedDateTime.fromtimestamp(value))
 				else:
 					# FIXME! Seconds?
-					skeletonValues.accessedValues[name] = time(hour=int(value / 60), minute=int(value % 60))
+					skel.accessedValues[name] = time(hour=int(value / 60), minute=int(value % 60))
 			elif isinstance(value, datetime):
-				self.setLocalized(skeletonValues, name,
+				self.setLocalized(skel, name,
 								  ExtendedDateTime.now().strptime(value.strftime("%d.%m.%Y %H:%M:%S"),
 																  "%d.%m.%Y %H:%M:%S"))
 			else:
 				# We got garbarge from the datastore
-				skeletonValues.accessedValues[name] = None
+				skel.accessedValues[name] = None
 			return True
 		return False
 

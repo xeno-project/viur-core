@@ -16,6 +16,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha256
 import email.header
 from typing import Any, Union
+from viur.core.contextvars import currentLanguage
 
 # Determine which ProjectID we currently run in (as the app_identity module isn't available anymore)
 _, projectID = conf["xeno.application.projectID"] #google.auth.default()
@@ -35,9 +36,7 @@ def generateRandomString(length: int = 13) -> str:
 	:returns: A string with random characters of the given length.
 	:rtype: str
 	"""
-	return (''.join([
-		random.choice(string.ascii_lowercase + string.ascii_uppercase + string.digits)
-		for x in range(length)]))
+	return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
 
 def sendEMail(dests, name, skel, extraFiles=[], cc=None, bcc=None, replyTo=None, *args, **kwargs):
@@ -280,8 +279,8 @@ def downloadUrlFor(folder: str, fileName: str, derived: bool = False,
 
 
 def seoUrlToEntry(module, entry=None, skelType=None, language=None):
-	from viur.core import request, conf
-	lang = request.current.get().language
+	from viur.core import conf
+	lang = currentLanguage.get()
 	if module in conf["viur.languageModuleMap"] and lang in conf["viur.languageModuleMap"][module]:
 		module = conf["viur.languageModuleMap"][module][lang]
 	if not entry:
@@ -304,8 +303,8 @@ def seoUrlToEntry(module, entry=None, skelType=None, language=None):
 
 
 def seoUrlToFunction(module, function, render=None):
-	from viur.core import request, conf
-	lang = request.current.get().language
+	from viur.core import conf
+	lang = currentLanguage.get()
 	if module in conf["viur.languageModuleMap"] and lang in conf["viur.languageModuleMap"][module]:
 		module = conf["viur.languageModuleMap"][module][lang]
 	pathComponents = ["", lang]
