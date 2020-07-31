@@ -11,7 +11,7 @@ from viur.core.prototypes.hierarchy import HierarchySkel
 from viur.core.prototypes.tree import TreeLeafSkel
 from viur.core.render.json.default import DefaultRender
 from viur.core.modules.file import decodeFileName
-from viur.core.contextvars import currentRequest
+from viur.core.utils import currentRequest
 #from google.appengine.api import datastore, datastore_types, urlfetch
 #from google.appengine.ext import blobstore
 #from google.appengine.ext.blobstore import BlobInfo
@@ -70,7 +70,7 @@ class DbTransfer(object):
 			raise errors.Forbidden()
 		return pickle.dumps("hsk-py3-test")
 		# FIXME!
-		return (pickle.dumps(db.Query("SharedConfData").get().key().app()))  # app_identity.get_application_id()
+		return (pickle.dumps(db.Query("SharedConfData").getEntry().key().app()))  # app_identity.get_application_id()
 
 	def getUploads(self, field_name=None):
 		"""

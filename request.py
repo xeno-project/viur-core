@@ -8,9 +8,9 @@ from io import StringIO
 import webob
 from viur.core import errors
 from urllib.parse import urljoin, urlparse, unquote
-from viur.core.logging import requestLogger, client as loggingClient, requestLoggingRessource
+#from viur.core.logging import requestLogger, client as loggingClient, requestLoggingRessource
 from viur.core import utils
-from viur.core.contextvars import currentSession
+from viur.core.utils import currentSession, currentLanguage
 import logging
 from time import time
 
@@ -104,35 +104,35 @@ class BrowseHandler():  # webapp.RequestHandler
 					lng = self.request.headers["X-Appengine-Country"].lower()
 					if lng in conf["viur.availableLanguages"] + list(conf["viur.languageAliasMap"].keys()):
 						sessionReference["lang"] = lng
-						self.language = lng
+						currentLanguage.set(lng)
 					else:
 						sessionReference["lang"] = conf["viur.defaultLanguage"]
 			else:
-				self.language = sessionReference["lang"]
+				currentLanguage.set(sessionReference["lang"])
 		elif conf["viur.languageMethod"] == "domain":
 			host = self.request.host_url.lower()
 			host = host[host.find("://") + 3:].strip(" /")  # strip http(s)://
 			if host.startswith("www."):
 				host = host[4:]
 			if host in conf["viur.domainLanguageMapping"]:
-				self.language = conf["viur.domainLanguageMapping"][host]
+				currentLanguage.set(conf["viur.domainLanguageMapping"][host])
 			else:  # We have no language configured for this domain, try to read it from session
 				if "lang" in sessionReference:
-					self.language = sessionReference["lang"]
+					currentLanguage.set(sessionReference["lang"])
 		elif conf["viur.languageMethod"] == "url":
 			tmppath = urlparse(path).path
 			tmppath = [unquote(x) for x in tmppath.lower().strip("/").split("/")]
 			if len(tmppath) > 0 and tmppath[0] in conf["viur.availableLanguages"] + list(
 				conf["viur.languageAliasMap"].keys()):
-				self.language = tmppath[0]
+				currentLanguage.set(tmppath[0])
 				return (path[len(tmppath[0]) + 1:])  # Return the path stripped by its language segment
 			else:  # This URL doesnt contain an language prefix, try to read it from session
 				if "lang" in sessionReference:
-					self.language = sessionReference["lang"]
+					currentLanguage.set(sessionReference["lang"])
 				elif "X-Appengine-Country" in self.request.headers.keys():
 					lng = self.request.headers["X-Appengine-Country"].lower()
 					if lng in conf["viur.availableLanguages"] or lng in conf["viur.languageAliasMap"]:
-						self.language = lng
+						currentLanguage.set(lng)
 		return path
 
 	def processRequest(self):
@@ -150,11 +150,14 @@ class BrowseHandler():  # webapp.RequestHandler
 		self.internalRequest = False
 		self.isDevServer = os.environ['GAE_ENV'] == "localdev"  # Were running on development Server
 		self.isSSLConnection = self.request.host_url.lower().startswith("https://")  # We have an encrypted channel
-		self.language = conf["viur.defaultLanguage"]
+		currentLanguage.set(conf["viur.defaultLanguage"])
 		self.disableCache = False  # Shall this request bypass the caches?
 		self.args = []
 		self.kwargs = {}
 		path = self.request.path
+		if self.isDevServer:
+			# We'll have to emulate the task-queue locally as far as possible until supported by dev_appserver again
+			self.pendingTasks = []
 
 		# Add CSP headers early (if any)
 		if conf["viur.security.contentSecurityPolicy"] and conf["viur.security.contentSecurityPolicy"]["_headerCache"]:
@@ -290,6 +293,11 @@ class BrowseHandler():  # webapp.RequestHandler
 			}
 			requestLogger.log_text("", client=loggingClient, severity=SEVERITY, http_request=REQUEST, trace=TRACE,
 								   resource=requestLoggingRessource)
+		if self.isDevServer:
+			while self.pendingTasks:
+				task = self.pendingTasks.pop()
+				logging.info("Running task directly after request: %s" % str(task))
+				task()
 
 	def findAndCall(self, path, *args, **kwargs):  # Do the actual work: process the request
 		# Prevent Hash-collision attacks
@@ -304,7 +312,7 @@ class BrowseHandler():  # webapp.RequestHandler
 			else:
 				kwargs[key] = value
 			stopCount -= 1
-			if not stopCount:  # We reached zero; maximum PostParamsCount excceded
+			if not stopCount:  # We reached zero; maximum PostParamsCount exceeded
 				raise errors.NotAcceptable()
 
 		if "self" in kwargs:  # self is reserved for bound methods

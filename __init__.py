@@ -39,7 +39,7 @@ from viur.core import request
 from viur.core import languages as servertrans
 from viur.core.i18n import initializeTranslations
 from viur.core import logging as viurLogging  # Initialize request logging
-from viur.core.contextvars import currentRequest, currentSession, currentLanguage, currentRequestData
+from viur.core.utils import currentRequest, currentSession, currentLanguage, currentRequestData
 from viur.core.session import GaeSession
 import logging
 import webob
@@ -82,7 +82,7 @@ def mapModule(moduleObj: object, moduleName: str, targetResoveRender: dict):
 	moduleFunctions = {}
 	for key in [x for x in dir(moduleObj) if x[0] != "_"]:
 		prop = getattr(moduleObj, key)
-		if prop == "canAccess" or getattr(prop, "exposed", None):
+		if key == "canAccess" or getattr(prop, "exposed", None):
 			moduleFunctions[key] = prop
 	for lang in conf["viur.availableLanguages"] or [conf["viur.defaultLanguage"]]:
 		# Map the module under each translation
@@ -287,6 +287,7 @@ def setup(modules, render=None, default="html"):
 
 	runStartupTasks()  # Add a deferred call to run all queued startup tasks
 	initializeTranslations()
+	#assert conf["viur.file.hmacKey"], "You must set a secret and unique Application-Key to viur.file.hmacKey"
 	return app
 
 

@@ -104,7 +104,7 @@ class Singleton(BasicApplication):
 
 		The function performs several access control checks on the requested entity before it is rendered.
 
-		.. seealso:: :func:`viewSkel`, :func:`canView`, :func:`onItemViewed`
+		.. seealso:: :func:`viewSkel`, :func:`canView`, :func:`onViewed`
 
 		:returns: The rendered representation of the entity.
 
@@ -121,7 +121,7 @@ class Singleton(BasicApplication):
 		if not skel.fromDB(key):
 			raise errors.NotFound()
 
-		self.onItemViewed(skel)
+		self.onViewed(skel)
 		return self.render.view(skel)
 
 	@exposed
@@ -134,7 +134,7 @@ class Singleton(BasicApplication):
 		or as the first parameter in *args*. The function performs several access control checks
 		on the singleton's entity before it is modified.
 
-		.. seealso:: :func:`editSkel`, :func:`onItemEdited`, :func:`canEdit`
+		.. seealso:: :func:`editSkel`, :func:`onEdited`, :func:`canEdit`
 
 		:returns: The rendered, edited object of the entry, eventually with error hints.
 
@@ -154,9 +154,8 @@ class Singleton(BasicApplication):
 
 		key = db.Key(self.editSkel().kindName, self.getKey())
 
-		if not skel.fromDB(str(key)):  # Its not there yet; we need to set the key again
+		if not skel.fromDB(key):  # Its not there yet; we need to set the key again
 			skel["key"] = key
-
 		if (len(kwargs) == 0  # no data supplied
 				or skey == ""  # no skey provided
 				or not skel.fromClient(kwargs)  # failure on reading into the bones
@@ -167,8 +166,8 @@ class Singleton(BasicApplication):
 			raise errors.PreconditionFailed()
 
 		skel.toDB()
-		self.onItemEdited(skel)
-		return self.render.editItemSuccess(skel)
+		self.onEdited(skel)
+		return self.render.editSuccess(skel)
 
 	def getContents(self):
 		"""
@@ -277,7 +276,7 @@ class Singleton(BasicApplication):
 			return (True)
 		return (False)
 
-	def onItemEdited(self, skel):
+	def onEdited(self, skel):
 		"""
 		Hook function that is called after modifying the entry.
 
@@ -294,7 +293,7 @@ class Singleton(BasicApplication):
 		if user:
 			logging.info("User: %s (%s)" % (user["name"], user["key"]))
 
-	def onItemViewed(self, skel):
+	def onViewed(self, skel):
 		"""
 		Hook function that is called when viewing an entry.
 

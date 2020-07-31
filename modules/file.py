@@ -1,30 +1,35 @@
 # -*- coding: utf-8 -*-
 
-from viur.core import utils, db, securitykey, session, errors, conf, request, forcePost, forceSSL, exposed, \
-	internalExposed
-from viur.core.skeleton import Skeleton, skeletonByKind
-from viur.core.bones import *
-from viur.core.prototypes.uniformtree import Tree, TreeSkel, TreeType
-from viur.core.tasks import callDeferred, PeriodicTask
-from quopri import decodestring
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-from hashlib import sha256
+import base64
 import email.header
-import collections, logging, cgi, string
-from google.auth import compute_engine
+import json
+import logging
+from base64 import urlsafe_b64decode
 from datetime import datetime, timedelta
-from google.cloud import storage
-from viur.core.utils import projectID
-import hashlib
-import hmac
 from io import BytesIO
-from PIL import Image
-from typing import Union, Tuple, Dict
+from quopri import decodestring
+from typing import Dict, Tuple, Union
 
-#client = storage.Client.from_service_account_json("store_credentials.json")
+import google.auth
+from PIL import Image
+from google.auth import compute_engine
+from google.auth.transport import requests
+from google.cloud import storage
+from google.cloud._helpers import _NOW, _datetime_to_rfc3339
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+
+
+from viur.core import db, errors, exposed, forcePost, forceSSL, internalExposed, securitykey, utils
+from viur.core.bones import *
+from viur.core.prototypes.tree import Tree, TreeSkel, TreeType
+from viur.core.skeleton import skeletonByKind
+from viur.core.tasks import PeriodicTask, callDeferred
+from viur.core.utils import projectID
+
+#credentials, project = google.auth.default()
+#client = storage.Client(project, credentials)
 #bucket = client.lookup_bucket("%s.appspot.com" % projectID)
-#conf["viur.file.hmacKey"] = hashlib.sha3_384(
-#	open("store_credentials.json", "rb").read()).digest()  # FIXME: Persistent key from db?
+
 
 
 class injectStoreURLBone(baseBone):
@@ -68,7 +73,6 @@ class fileBaseSkel(TreeSkel):
 	mimetype = stringBone(descr="Mime-Info", readOnly=True, indexed=True)
 	weak = booleanBone(descr="Weak reference", indexed=True, readOnly=True, visible=False)
 	pending = booleanBone(descr="Pending upload", readOnly=True, visible=False, defaultValue=False)
-	servingurl = stringBone(descr="Serving URL", readOnly=True)
 	width = numericBone(descr="Width", indexed=True, readOnly=True, searchable=True)
 	height = numericBone(descr="Height", indexed=True, readOnly=True, searchable=True)
 	downloadUrl = injectStoreURLBone(descr="Download-URL", readOnly=True, visible=False)
@@ -167,16 +171,75 @@ class File(Tree):
 			if skel.fromDB(str(d)):
 				skel.delete()
 
+	def generateUploadPolicy(self, conditions):
+		"""
+		Our implementation of bucket.generate_upload_policy - which works with default token credentials
+		Create a signed upload policy for uploading objects.
+
+		This method generates and signs a policy document. You can use
+		`policy documents`_ to allow visitors to a website to upload files to
+		Google Cloud Storage without giving them direct write access.
+
+		For example:
+
+		.. literalinclude:: snippets.py
+			:start-after: [START policy_document]
+			:end-before: [END policy_document]
+
+		.. _policy documents:
+			https://cloud.google.com/storage/docs/xml-api\
+			/post-object#policydocument
+
+		:type expiration: datetime
+		:param expiration: Optional expiration in UTC. If not specified, the
+						   policy will expire in 1 hour.
+
+		:type conditions: list
+		:param conditions: A list of conditions as described in the
+						  `policy documents`_ documentation.
+
+		:type client: :class:`~google.cloud.storage.client.Client`
+		:param client: Optional. The client to use.  If not passed, falls back
+					   to the ``client`` stored on the current bucket.
+
+		:rtype: dict
+		:returns: A dictionary of (form field name, form field value) of form
+				  fields that should be added to your HTML upload form in order
+				  to attach the signature.
+		"""
+		global credentials, bucket
+		auth_request = requests.Request()
+		sign_cred = compute_engine.IDTokenCredentials(auth_request, "",
+													  service_account_email=credentials.service_account_email)
+		expiration = _NOW() + timedelta(hours=1)
+		conditions = conditions + [{"bucket": bucket.name}]
+		policy_document = {
+			"expiration": _datetime_to_rfc3339(expiration),
+			"conditions": conditions,
+		}
+		encoded_policy_document = base64.b64encode(
+			json.dumps(policy_document).encode("utf-8")
+		)
+		signature = base64.b64encode(sign_cred.sign_bytes(encoded_policy_document))
+		fields = {
+			"bucket": bucket.name,
+			"GoogleAccessId": sign_cred.signer_email,
+			"policy": encoded_policy_document.decode("utf-8"),
+			"signature": signature.decode("utf-8"),
+		}
+		return fields
+
 	def createUploadURL(self, node: Union[str, None]) -> Tuple[str, str, Dict[str, str]]:
+		global bucket
 		targetKey = utils.generateRandomString()
 		conditions = [["starts-with", "$key", "%s/source/" % targetKey]]
-
-		policy = bucket.generate_upload_policy(conditions)
+		if isinstance(credentials, ServiceAccountCredentials):  # We run locally with an service-account.json
+			policy = bucket.generate_upload_policy(conditions)
+		else:  # Use our fixed PolicyGenerator - Google is currently unable to create one itself on its GCE
+			policy = self.generateUploadPolicy(conditions)
 		uploadUrl = "https://%s.storage.googleapis.com" % bucket.name
-
 		# Create a correspondingfile-lock object early, otherwise we would have to ensure that the file-lock object
 		# the user creates matches the file he had uploaded
-
 		fileSkel = self.addSkel(TreeType.Leaf)
 		fileSkel["key"] = targetKey
 		fileSkel["name"] = "pending"
@@ -234,7 +297,7 @@ class File(Tree):
 			for repo in repos:
 				if not "user" in repo:
 					continue
-				user = db.Query("user").filter("uid =", repo.user).get()
+				user = db.Query("user").filter("uid =", repo.user).getEntry()
 				if not user or not "name" in user:
 					continue
 				res.append({
@@ -247,16 +310,14 @@ class File(Tree):
 	def download(self, blobKey, fileName="", download="", sig="", *args, **kwargs):
 		"""
 		Download a file.
-
 		:param blobKey: The unique blob key of the file.
 		:type blobKey: str
-
 		:param fileName: Optional filename to provide in the header.
 		:type fileName: str
-
 		:param download: Set header to attachment retrival, set explictly to "1" if download is wanted.
 		:type download: str
 		"""
+		global credentials, bucket
 		if not sig:
 			raise errors.PreconditionFailed()
 		# First, validate the signature, otherwise we don't need to proceed any further
@@ -267,10 +328,19 @@ class File(Tree):
 		if validUntil != "0" and datetime.strptime(validUntil, "%Y%m%d%H%M") < datetime.now():
 			raise errors.Gone()
 		# Create a signed url and redirect the user
-		blob = bucket.get_blob(dlPath)
-		if not blob:
-			raise errors.NotFound()
-		signed_url = blob.generate_signed_url(datetime.now() + timedelta(seconds=60))
+		if isinstance(credentials, ServiceAccountCredentials):  # We run locally with an service-account.json
+			blob = bucket.get_blob(dlPath)
+			if not blob:
+				raise errors.NotFound()
+			signed_url = blob.generate_signed_url(datetime.now() + timedelta(seconds=60))
+		else:  # We are inside the appengine
+			auth_request = requests.Request()
+			signed_blob_path = bucket.blob(dlPath)
+			expires_at_ms = datetime.now() + timedelta(seconds=60)
+			signing_credentials = compute_engine.IDTokenCredentials(auth_request, "",
+																	service_account_email=credentials.service_account_email)
+			signed_url = signed_blob_path.generate_signed_url(expires_at_ms, credentials=signing_credentials,
+															  version="v4")
 		raise errors.Redirect(signed_url)
 
 	@exposed
@@ -312,7 +382,7 @@ class File(Tree):
 			skel.toDB()
 			# Add updated download-URL as the auto-generated isn't valid yet
 			skel["downloadUrl"] = utils.downloadUrlFor(skel["dlkey"], skel["name"], derived=False)
-			return self.render.addItemSuccess(skel)
+			return self.render.addSuccess(skel)
 		return super(File, self).add(skelType, node, *args, **kwargs)
 
 	def onItemUploaded(self, skel):
@@ -344,30 +414,27 @@ def doCheckForUnreferencedBlobs(cursor=None):
 			db.Put(obj)
 		return res
 
-	gotAtLeastOne = False
-	query = db.Query("viur-blob-locks").filter("has_old_blob_references", True).cursor(cursor)
-	for lockKey in query.run(100, keysOnly=True):
-		gotAtLeastOne = True
-		oldBlobKeys = db.RunInTransaction(getOldBlobKeysTxn, lockKey)
+	query = db.Query("viur-blob-locks").filter("has_old_blob_references", True).setCursor(cursor)
+	for lockObj in query.run(100):
+		oldBlobKeys = db.RunInTransaction(getOldBlobKeysTxn, lockObj.key)
 		for blobKey in oldBlobKeys:
-			if db.Query("viur-blob-locks").filter("active_blob_references =", blobKey).get():
+			if db.Query("viur-blob-locks").filter("active_blob_references =", blobKey).getEntry():
 				# This blob is referenced elsewhere
 				logging.info("Stale blob is still referenced, %s" % blobKey)
 				continue
 			# Add a marker and schedule it for deletion
-			fileObj = db.Query("viur-deleted-files").filter("dlkey", blobKey).get()
+			fileObj = db.Query("viur-deleted-files").filter("dlkey", blobKey).getEntry()
 			if fileObj:  # Its already marked
 				logging.info("Stale blob already marked for deletion, %s" % blobKey)
 				return
-			fileObj = db.Entity("viur-deleted-files")
+			fileObj = db.Entity(db.Key("viur-deleted-files"))
 			fileObj["itercount"] = 0
 			fileObj["dlkey"] = str(blobKey)
 			logging.info("Stale blob marked dirty, %s" % blobKey)
 			db.Put(fileObj)
 	newCursor = query.getCursor()
-	if gotAtLeastOne and newCursor and newCursor.urlsafe() != cursor:
-		doCheckForUnreferencedBlobs(newCursor.urlsafe())
-
+	if newCursor:
+		doCheckForUnreferencedBlobs(newCursor)
 
 
 @PeriodicTask(0)
@@ -382,24 +449,22 @@ def startCleanupDeletedFiles():
 @callDeferred
 def doCleanupDeletedFiles(cursor=None):
 	maxIterCount = 2  # How often a file will be checked for deletion
-	gotAtLeastOne = False
 	query = db.Query("viur-deleted-files")
 	if cursor:
-		query.cursor(cursor)
+		query.setCursor(cursor)
 	for file in query.run(100):
-		gotAtLeastOne = True
 		if not "dlkey" in file:
-			db.Delete((file.collection, file.name))
-		elif db.Query("viur-blob-locks").filter("active_blob_references =", file["dlkey"]).get():
+			db.Delete(file.key)
+		elif db.Query("viur-blob-locks").filter("active_blob_references =", file["dlkey"]).getEntry():
 			logging.info("is referenced, %s" % file["dlkey"])
-			db.Delete((file.collection, file.name))
+			db.Delete(file.key)
 		else:
 			if file["itercount"] > maxIterCount:
 				logging.info("Finally deleting, %s" % file["dlkey"])
 				blobs = bucket.list_blobs(prefix="%s/" % file["dlkey"])
 				for blob in blobs:
 					blob.delete()
-				db.Delete((file.collection, file.name))
+				db.Delete(file.key)
 				# There should be exactly 1 or 0 of these
 				for f in skeletonByKind("file")().all().filter("dlkey =", file["dlkey"]).fetch(99):
 					f.delete()
@@ -407,6 +472,6 @@ def doCleanupDeletedFiles(cursor=None):
 				logging.debug("Increasing count, %s" % file["dlkey"])
 				file["itercount"] += 1
 				db.Put(file)
-# newCursor = query.getCursor()
-# if gotAtLeastOne and newCursor and newCursor.urlsafe() != cursor:
-#	doCleanupDeletedFiles(newCursor.urlsafe())
+	newCursor = query.getCursor()
+	if newCursor:
+		doCleanupDeletedFiles(newCursor)

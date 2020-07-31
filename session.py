@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
+import logging
+from hmac import compare_digest
 from time import time
+
 from viur.core.tasks import PeriodicTask, callDeferred
 from viur.core import db, utils
 from viur.core.config import conf
-import logging
-from hmac import compare_digest
-from viur.core.contextvars import currentSession as current
+
 
 """
 	Provides a fast and reliable session implementation for the Google AppEngine™.
@@ -25,15 +26,16 @@ from viur.core.contextvars import currentSession as current
 """
 
 
-
-
 class GaeSession:
-	plainCookieName = "viurHttpCookie"
-	sslCookieName = "viurSSLCookie"
+	"""Store Sessions inside the Big Table/Memcache"""
 	kindName = "viur-session"
 	sameSite = "lax"
 
-	"""Store Sessions inside the Big Table/Memcache"""
+	def __init__(self):
+		super().__init__()
+
+		self.plainCookieName = f"viurHttpCookie_{utils.projectID}"
+		self.sslCookieName = f"viurSSLCookie_{utils.projectID}"
 
 	def load(self, req):
 		"""
@@ -195,7 +197,7 @@ class GaeSession:
 		self.securityKey = utils.generateRandomString(13)
 		self.changed = True
 		self.isInitial = True
-		self.session = {}
+		self.session = db.Entity()
 		if lang:
 			self.session["language"] = lang
 
@@ -256,11 +258,9 @@ def startClearSessions():
 
 @callDeferred
 def doClearSessions(timeStamp, cursor):
-	gotAtLeastOne = False
 	query = db.Query(GaeSession.kindName).filter("lastseen <", timeStamp)
 	for oldKey in query.run(100, keysOnly=True):
-		gotAtLeastOne = True
 		db.Delete(oldKey)
 	newCursor = query.getCursor()
-	if gotAtLeastOne and newCursor and newCursor.urlsafe() != cursor:
-		doClearSessions(timeStamp, newCursor.urlsafe())
+	if newCursor:
+		doClearSessions(timeStamp, newCursor)

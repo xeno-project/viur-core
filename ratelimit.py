@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #from google.appengine.api import memcache
 from viur.core import utils
-from viur.core.contextvars import currentRequest
+from viur.core.utils import currentRequest
 from datetime import datetime
 
 
@@ -57,7 +57,7 @@ class RateLimit(object):
 				return ":".join(remoteAddr[:4])
 			elif ":" in remoteAddr:  # It's IPv6, so we remove the last 64 bits (interface id)
 				# as it is easily controlled by the user
-				return ":".join(remoteAddr.split(":")[4:])
+				return ":".join(remoteAddr.split(":")[:4])
 			else:  # It's IPv4, simply return that address
 				return remoteAddr
 

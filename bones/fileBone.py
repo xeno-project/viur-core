@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from viur.core.bones import treeItemBone
+from viur.core.bones import treeLeafBone
 from viur.core import db, request, conf
 from viur.core.utils import downloadUrlFor
 from viur.core.tasks import callDeferred
@@ -7,6 +7,7 @@ from viur.core.tasks import callDeferred
 from hashlib import sha256
 import logging
 from typing import Union, Dict
+from itertools import chain
 
 
 @callDeferred
@@ -42,13 +43,14 @@ def ensureDerived(key: str, name: str, deriveMap: Dict[str, Dict]):
 		skel.toDB()
 
 
-class fileBone(treeItemBone):
+class fileBone(treeLeafBone):
 	kind = "file"
-	type = "relational.treeitem.file"
+	type = "relational.tree.leaf.file"
 	refKeys = ["name", "key", "mimetype", "dlkey", "size", "width", "height", "derived"]
 
 	def __init__(self, format="$(dest.name)", derive: Union[None, Dict[str, Dict]] = None, *args, **kwargs):
-		assert "dlkey" in self.refKeys, "You cannot remove dlkey from refKeys!"
+		if "dlkey" not in self.refKeys:
+			self.refKeys.append("dlkey")
 		super(fileBone, self).__init__(format=format, *args, **kwargs)
 		self.derive = derive
 
@@ -65,10 +67,11 @@ class fileBone(treeItemBone):
 		val = skel[name]
 		if val is None:
 			return []
-		elif isinstance(val, dict):
-			return [val["dest"]["dlkey"]]
-		elif isinstance(val, list):
+		if self.languages and self.multiple:
+			return chain(*[[y["dest"]["dlkey"] for y in x] for x in val.values() if x])
+		elif self.languages:
+			return [x["dest"]["dlkey"] for x in val.values() if x]
+		elif self.multiple:
 			return [x["dest"]["dlkey"] for x in val]
 		else:
-			logging.critical("Unknown value for bone %s (%s)" % (name, str(type(val))))
-			return []
+			return [val["dest"]["dlkey"]]

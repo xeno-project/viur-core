@@ -41,8 +41,8 @@ class SortOrder(Enum):
 Entity = datastore.Entity
 Key = __client__.key  # Proxy-Function
 KeyClass = datastore.Key  # Expose the class also
-Get = __client__.get
-#Delete = __client__.delete
+# Get = __client__.get
+# Delete = __client__.delete
 AllocateIds = __client__.allocate_ids
 Conflict = exceptions.Conflict
 Error = exceptions.GoogleCloudError
@@ -76,6 +76,15 @@ def keyHelper(inKey: Union[KeyClass, str, int], targetKind: str,
 		raise ValueError("Unknown key type %r" % type(inKey))
 
 
+def Get(keys: Union[KeyClass, List[KeyClass]]):
+	if isinstance(keys, list):
+		# GetMulti does not obey orderings - results can be returned in any order. We'll need to fix this here
+		resList = list(__client__.get_multi(keys))
+		resList.sort(key=lambda x: keys.index(x.key) if x else -1)
+		return resList
+	return __client__.get(keys)
+
+
 def Put(entity: Union[Entity, List[Entity]]):
 	"""
 		Save an entity in the Cloud Datastore.
@@ -87,13 +96,13 @@ def Put(entity: Union[Entity, List[Entity]]):
 	for e in entity:
 		if not e.key.is_partial and e.key.name and e.key.name.isdigit():
 			raise ValueError("Cannot store an entity with digit-only string key")
-		fixUnindexableProperties(e)
+	# fixUnindexableProperties(e)
 	return __client__.put_multi(entities=entity)
 
 
 def Delete(keys: Union[Entity, List[Entity], KeyClass, List[KeyClass]]):
 	if isinstance(keys, list):
-		return __client__.delete_multi([(x if isinstance(x, KeyClass) else x.key) for x in keys ])
+		return __client__.delete_multi([(x if isinstance(x, KeyClass) else x.key) for x in keys])
 	else:
 		if isinstance(keys, KeyClass):
 			return __client__.delete(keys)
@@ -170,6 +179,7 @@ def GetOrInsert(key: Key, **kwargs):
 		:returns: Returns the wanted Entity.
 		:rtype: server.db.Entity
 	"""
+
 	def txn(key, kwargs):
 		obj = Get(key)
 		if not obj:
@@ -190,9 +200,9 @@ class Query(object):
 	"""
 
 	# Fixme: Typing for Skeleton-Class we can't import here?
-	def __init__(self, collection: str, srcSkelClass: Union[None, Any] = None, *args, **kwargs):
+	def __init__(self, kind: str, srcSkelClass: Union[None, Any] = None, *args, **kwargs):
 		super(Query, self).__init__()
-		self.collection = collection
+		self.kind = kind
 		self.srcSkel = srcSkelClass
 		self.filters: Union[None, Dict[str: DATASTORE_BASE_TYPES], List[Dict[str: DATASTORE_BASE_TYPES]]] = {}
 		self.orders: List[Tuple[str, SortOrder]] = [(KEY_SPECIAL_PROPERTY, SortOrder.Ascending)]
@@ -209,7 +219,7 @@ class Query(object):
 		self._calculateInternalMultiQueryAmount: Union[None, Callable[[Query, int], int]] = None
 		# Allow carrying custom data along with the query. Currently only used by spartialBone to record the guranteed correctnes
 		self.customQueryInfo = {}
-		self.origCollection = collection
+		self.origKind = kind
 		self._lastEntry = None
 		self._fulltextQueryString: Union[None, str] = None
 		self.lastCursor = None
@@ -332,7 +342,7 @@ class Query(object):
 				# The Hook did something special directly on 'self' to apply that filter,
 				# no need for us to do anything
 				return self
-			filter, value = r
+			prop, value = r
 		if " " not in prop:
 			# Ensure that an equality filter is explicitly postfixed with " ="
 			field = prop
@@ -549,20 +559,20 @@ class Query(object):
 		"""
 		try:
 			order = self.datastoreQuery.__orderings
-			return ([(prop, dir) for (prop, dir) in order])
+			return [(prop, dir) for (prop, dir) in order]
 		except:
-			return ([])
+			return []
 
-	def getCursor(self, serializeForUntrustedUse=False):
+	def getCursor(self):
 		"""
 			Get a valid cursor from the last run of this query.
 
 			The source of this cursor varies depending on what the last call was:
-			- :func:`server.db.Query.run`: A cursor that points immediatelly behind the\
+			- :func:`server.db.Query.run`: A cursor that points immediately behind the\
 			last result pulled off the returned iterator.
-			- :func:`server.db.Query.get`:: A cursor that points immediatelly behind the\
+			- :func:`server.db.Query.get`:: A cursor that points immediately behind the\
 			last result in the returned list.
-			- :func:`server.db.Query.count`: A cursor that points immediatelly behind the\
+			- :func:`server.db.Query.count`: A cursor that points immediately behind the\
 			last result counted.
 
 			:returns: A cursor that can be used in subsequent query requests.
@@ -570,27 +580,7 @@ class Query(object):
 
 			:raises: :exc:`AssertionError` if the query has not yet been run or cannot be compiled.
 		"""
-		return self.lastCursor
-		if not isinstance(self.filters, dict):
-			# Either a multi-query or an unsatisfiable query
-			return None
-		if not self._lastEntry:
-			# We did not run yet
-			return None
-
-		res = []
-		for fieldPath, direction in self.orders:
-			if fieldPath == KEY_SPECIAL_PROPERTY:
-				res.append("%s/%s" % (self._lastEntry.collection, self._lastEntry.name))
-			else:
-				res.append(_valueFromEntry(self._lastEntry, fieldPath))
-		if serializeForUntrustedUse:
-			# We could simply fallback for a normal hash here as we sign it later again
-			hmacSigData = utils.hmacSign(res)
-			res = "%s_%s" % (self._lastEntry.name, hmacSigData)
-			hmacFullSig = utils.hmacSign(res)
-			res += "_" + hmacFullSig
-		return res
+		return self.lastCursor.decode("ASCII") if self.lastCursor else None
 
 	def getKind(self):
 		"""
@@ -598,7 +588,7 @@ class Query(object):
 
 			:rtype: str
 		"""
-		return self.collection
+		return self.kind
 
 	def setKind(self, newKind):
 		"""
@@ -691,6 +681,18 @@ class Query(object):
 					pass
 		return entities
 
+	def _fixKind(self, resultList):
+		"""
+			Jump to parentKind if nessesary (used in realtions)
+		:param resultList:
+		:return:
+		"""
+		resultList = list(resultList)
+		if resultList and resultList[0].key.kind != self.origKind and resultList[0].key.parent and \
+				resultList[0].key.parent.kind == self.origKind:
+			return list(Get([x.key.parent for x in resultList]))
+		return resultList
+
 	def run(self, limit=-1, **kwargs):
 		"""
 			Run this query.
@@ -741,7 +743,7 @@ class Query(object):
 					filters=singleFilter,
 					amount=qryLimit))
 			# Wait for the actual results to arrive and convert the protobuffs to Entries
-			res = [list(x) for x in res]
+			res = [self._fixKind(x) for x in res]
 			if self._customMultiQueryMerge:
 				# We have a custom merge function, use that
 				res = self._customMultiQueryMerge(self, res, origLimit)
@@ -749,13 +751,14 @@ class Query(object):
 				# We must merge (and sort) the results ourself
 				res = self._mergeMultiQueryResults(res)
 		else:  # We have just one single query
-			res = list(self._runSingleFilterQuery(self.filters, qryLimit))
+			res = self._fixKind(self._runSingleFilterQuery(self.filters, qryLimit))
 		if conf["viur.debug.traceQueries"]:
-			kindName = self.origCollection
 			orders = self.orders
 			filters = self.filters
-			logging.debug(
-				"Queried %s with filter %s and orders %s. Returned %s results" % (kindName, filters, orders, len(res)))
+			if self.kind != self.origKind:
+				logging.debug("Queried %s via %s with filter %s and orders %s. Returned %s results" % (self.origKind, self.kind, filters, orders, len(res)))
+			else:
+				logging.debug("Queried %s with filter %s and orders %s. Returned %s results" % (self.kind, filters, orders, len(res)))
 		if res:
 			self._lastEntry = res[-1]
 		return res
@@ -795,6 +798,7 @@ class Query(object):
 			skelInstance = SkeletonInstanceRef(self.srcSkel.skeletonCls, clonedBoneMap=self.srcSkel.boneMap)
 			skelInstance.dbEntity = e
 			res.append(skelInstance)
+		res.getCursor = lambda: self.getCursor()
 		return res
 
 	def iter(self, keysOnly=False):
@@ -827,7 +831,7 @@ class Query(object):
 				break
 			self._startCursor = self.lastCursor
 
-	def get(self) -> Union[None, Entity]:
+	def getEntry(self) -> Union[None, Entity]:
 		"""
 			Returns only the first entity of the current query.
 
@@ -853,7 +857,7 @@ class Query(object):
 		"""
 		if self.srcSkel is None:
 			raise NotImplementedError("This query has not been created using skel.all()")
-		res = self.get()
+		res = self.getEntry()
 		if res is None:
 			return None
 		self.srcSkel.setEntity(res)
@@ -870,17 +874,24 @@ class Query(object):
 			:returns: The cloned query.
 			:rtype: server.db.Query
 		"""
-		raise NotImplemented  # For now...
-		# FIXME: Is everything covered?
 		res = Query(self.getKind(), self.srcSkel)
-		res.limit(self.amount)
+		res.kind = self.kind
 		res.filters = deepcopy(self.filters)
 		res.orders = deepcopy(self.orders)
+		res.amount = self.amount
+		res._filterHook = self._filterHook
+		res._orderHook = self._orderHook
+		res._startCursor = self._startCursor
+		res._endCursor = self._endCursor
+		res._customMultiQueryMerge = self._customMultiQueryMerge
+		res._calculateInternalMultiQueryAmount = self._calculateInternalMultiQueryAmount
+		res.customQueryInfo = self.customQueryInfo
+		res.origKind = self.origKind
 		res._fulltextQueryString = self._fulltextQueryString
 		return res
 
 	def __repr__(self):
-		return "<db.Query on %s with filters %s and orders %s>" % (self.collection, self.filters, self.orders)
+		return "<db.Query on %s with filters %s and orders %s>" % (self.kind, self.filters, self.orders)
 
 
 def IsInTransaction():
@@ -896,7 +907,7 @@ def acquireTransactionSuccessMarker() -> str:
 	"""
 	txn = __client__.current_transaction
 	assert txn, "acquireTransactionSuccessMarker cannot be called outside an transaction"
-	marker = binascii.b2a_hex(txn.id)
+	marker = binascii.b2a_hex(txn.id).decode("ASCII")
 	if not "viurTxnMarkerSet" in dir(txn):
 		e = Entity(Key("viur-transactionmarker", marker))
 		e["creationdate"] = datetime.now()

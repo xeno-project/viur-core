@@ -12,7 +12,7 @@
 
 from datetime import datetime, timedelta
 from viur.core.utils import generateRandomString
-from viur.core.contextvars import currentSession, currentRequest
+from viur.core.utils import currentSession, currentRequest
 from viur.core import request
 from viur.core import db, conf
 from viur.core.tasks import PeriodicTask, callDeferred
@@ -57,7 +57,7 @@ def validate(key: str, useSessionKey: bool) -> Union[bool, db.Entity]:
 	if useSessionKey:
 		if key == "staticSessionKey":
 			skeyHeaderValue = currentRequest.get().request.headers.get("Sec-X-ViUR-StaticSKey")
-			if skeyHeaderValue and currentSession.validateStaticSecurityKey(skeyHeaderValue):
+			if skeyHeaderValue and currentSession.get().validateStaticSecurityKey(skeyHeaderValue):
 				return True
 		elif currentSession.get().validateSecurityKey(key):
 			return True
@@ -87,11 +87,9 @@ def startClearSKeys():
 
 @callDeferred
 def doClearSKeys(timeStamp, cursor):
-	gotAtLeastOne = False
 	query = db.Query(securityKeyKindName).filter("until <", datetime.strptime(timeStamp, "%d.%m.%Y %H:%M:%S"))
 	for oldKey in query.run(100, keysOnly=True):
-		gotAtLeastOne = True
 		db.Delete(oldKey)
 	newCursor = query.getCursor()
-	if gotAtLeastOne and newCursor and newCursor.urlsafe() != cursor:
-		doClearSKeys(timeStamp, newCursor.urlsafe())
+	if newCursor:
+		doClearSKeys(timeStamp, newCursor)
