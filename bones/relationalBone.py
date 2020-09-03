@@ -427,14 +427,14 @@ class relationalBone(baseBone):
 		else:
 			destKey = value
 			usingData = None
-		if not destKey:  # Allow setting this bone back to empty
-			return None, [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "No value submitted")]
+		#if not destKey:  # Allow setting this bone back to empty
+		#	return None, [ReadFromClientError(ReadFromClientErrorSeverity.Empty, name, "No value submitted")]
 		assert isinstance(destKey, str)
 		refSkel, usingSkel, errors = restoreSkels(destKey, usingData)
 		if refSkel:
 			return {"dest": refSkel, "rel": usingSkel}, errors
 		else:
-			return None, errors
+			return self.getEmptyValue(), errors
 
 	def _rewriteQuery(self, name, skel, dbFilter, rawFilter):
 		"""
@@ -784,6 +784,26 @@ class relationalBone(baseBone):
 
 		return res
 
+	def createRelSkelFromKey(self, key: Union[str, db.KeyClass], rel: Union[dict, None] = None):
+		"""
+			Creates a relSkel instance valid for this bone from the given database key.
+		"""
+		key = db.keyHelper(key, self.kind)
+		entity = db.Get(key)
+		if not entity:
+			logging.error("Key %s not found" % str(key))
+			return None
+		relSkel = self._refSkelCache()
+		relSkel.unserialize(entity)
+		for k in relSkel.keys():
+			# Unserialize all bones from refKeys, then drop dbEntity - otherwise all properties will be copied
+			_ = relSkel[k]
+		relSkel.dbEntity = None
+		return {
+			"dest": relSkel,
+			"rel": rel or None
+		}
+
 	def setBoneValue(self, skel, boneName, value, append, *args, **kwargs):
 		"""
 			Set our value to 'value'.
@@ -802,20 +822,6 @@ class relationalBone(baseBone):
 			:return: Wherever that operation succeeded or not.
 			:rtype: bool
 		"""
-		def relSkelFromKey(key):
-			key = db.keyHelper(key, self.kind)
-			entity = db.Get(key)
-			if not entity:
-				logging.error("Key %s not found" % str(key))
-				return None
-			relSkel = self._refSkelCache()
-			relSkel.unserialize(entity)
-			for k in relSkel.keys():
-				# Unserialize all bones from refKeys, then drop dbEntity - otherwise all properties will be copied
-				_ = relSkel[k]
-			relSkel.dbEntity = None
-			return relSkel
-
 		if append and not self.multiple:
 			raise ValueError("Bone %s is not multiple, cannot append!" % boneName)
 		if not self.multiple and not self.using:
@@ -827,7 +833,7 @@ class relationalBone(baseBone):
 		elif not self.multiple and self.using:
 			if not isinstance(value, tuple) or len(value) != 2 or \
 				not (isinstance(value[0], str) or isinstance(value[0], db.KeyClass)) or \
-				not isinstance(value[1], self.using):
+				not isinstance(value[1], self._skeletonInstanceClassRef):
 				raise ValueError("You must supply a tuple of (Database-Key, relSkel) to %s" % boneName)
 			realValue = value
 		elif self.multiple and not self.using:
@@ -851,17 +857,17 @@ class relationalBone(baseBone):
 			else:
 				realValue = value
 		if not self.multiple:
-			relSkel = relSkelFromKey(realValue[0])
-			if not relSkel:
+			rel = self.createRelSkelFromKey(realValue[0], realValue[1])
+			if not rel:
 				return False
-			skel[boneName] = {"dest": relSkel, "rel": realValue[1] if realValue[1] else None}
+			skel[boneName] = rel
 		else:
 			tmpRes = []
 			for val in realValue:
-				relSkel = relSkelFromKey(val[0])
-				if not relSkel:
+				rel = self.createRelSkelFromKey(val[0], val[1])
+				if not rel:
 					return False
-				tmpRes.append({"dest": relSkel, "rel": val[1] if val[1] else None})
+				tmpRes.append(rel)
 			if append:
 				if boneName not in skel or not isinstance(skel[boneName], list):
 					skel[boneName] = []
