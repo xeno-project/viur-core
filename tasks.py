@@ -409,7 +409,7 @@ def callDeferred(func):
 			except:
 				usr = None
 			env = {"user": usr}
-			logging.error(env)
+			#logging.error(env)
 			try:
 				env["lang"] = currentRequest.get().language
 			except AttributeError:  # This isn't originating from a normal request

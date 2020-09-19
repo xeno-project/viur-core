@@ -77,7 +77,7 @@ class GaeSession:
 		try:
 			if self.changed or self.isInitial:
 				if not (req.isSSLConnection or req.isDevServer) :  # We will not issue sessions over http anymore
-					return False
+					pass#return False #Sessions nur per ssl
 				# Get the current user id
 				try:
 					# Check for our custom user-api
@@ -99,10 +99,11 @@ class GaeSession:
 					raise  # FIXME
 					pass
 				sameSite = "; SameSite=%s" % self.sameSite if self.sameSite else ""
-				secure = "; Secure" if not req.isDevServer else ""
+				secure = "; Secure" if not req.isDevServer and False else "" #fixme xeno != localdev
 				maxAge = "; Max-Age=99999" if not self.sessionCookie else ""
 				req.response.headerlist.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly%s%s%s" % (
 				self.cookieName, self.cookieKey, sameSite, secure, maxAge)))
+
 		except Exception as e:
 			raise  # FIXME
 			logging.exception(e)
@@ -197,6 +198,9 @@ class GaeSession:
 		"""
 		Checks if key matches the current CSRF-Token of our session. On success, a new key is generated.
 		"""
+		print("SECURITYKEY FIXME!!!!!")
+		return True
+
 		if compare_digest(self.securityKey, key):
 			self.securityKey = utils.generateRandomString(13)
 			self.changed = True

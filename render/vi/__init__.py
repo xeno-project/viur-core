@@ -134,7 +134,7 @@ def index(*args, **kwargs):
 	if currentRequest.get().isDevServer or currentRequest.get().isSSLConnection:
 		raise errors.Redirect("/vi/s/main.html")
 	else:
-		appVersion = app_identity.get_default_version_hostname()
+		appVersion = conf["xeno.application.host"]#app_identity.get_default_version_hostname()
 		raise errors.Redirect("https://%s/vi/s/main.html" % appVersion)
 index.exposed = True
 

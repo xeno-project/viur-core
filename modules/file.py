@@ -30,6 +30,9 @@ from viur.core.utils import projectID
 #client = storage.Client(project, credentials)
 #bucket = client.lookup_bucket("%s.appspot.com" % projectID)
 
+from viur.xeno.files import bucket as xeno_bucket
+
+bucket = xeno_bucket()
 
 
 class injectStoreURLBone(baseBone):
@@ -233,11 +236,12 @@ class File(Tree):
 		global bucket
 		targetKey = utils.generateRandomString()
 		conditions = [["starts-with", "$key", "%s/source/" % targetKey]]
-		if isinstance(credentials, ServiceAccountCredentials):  # We run locally with an service-account.json
-			policy = bucket.generate_upload_policy(conditions)
-		else:  # Use our fixed PolicyGenerator - Google is currently unable to create one itself on its GCE
-			policy = self.generateUploadPolicy(conditions)
-		uploadUrl = "https://%s.storage.googleapis.com" % bucket.name
+		#if isinstance(credentials, ServiceAccountCredentials):  # We run locally with an service-account.json
+		policy = bucket.generate_upload_policy(conditions)
+		#else:  # Use our fixed PolicyGenerator - Google is currently unable to create one itself on its GCE
+		#	policy = self.generateUploadPolicy(conditions)
+		#uploadUrl = "https://%s.storage.googleapis.com" % bucket.name
+		uploadUrl = "http://localhost:8080/xeno/simplestorage"
 		# Create a correspondingfile-lock object early, otherwise we would have to ensure that the file-lock object
 		# the user creates matches the file he had uploaded
 		fileSkel = self.addSkel(TreeType.Leaf)
